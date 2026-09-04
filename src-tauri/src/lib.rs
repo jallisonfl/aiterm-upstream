@@ -207,6 +207,7 @@ pub fn run() {
             remote_api::remote_set_iroh,
             remote_api::remote_set_road,
             remote_api::remote_set_iroh_relay_url,
+            remote_api::remote_set_upnp,
             remote_api::remote_phone_relay_clear,
             remote_api::remote_set_road_order,
             remote_api::remote_set_port,

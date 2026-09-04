@@ -12,10 +12,12 @@
 //! bytes and never owns one.
 //!
 //! Reaching the desktop from outside the house is the desktop's own job —
-//! there is no relay and no third party in the path. While remote access is
-//! on, the desktop asks the router (UPnP IGD) to map its port, learns its
-//! public address, and puts LAN and public addresses in the QR; the phone
-//! tries them in order. The listener is TLS with a self-signed identity the
+//! there is no relay and no third party in the path. Router port mapping
+//! (UPnP IGD) is opt-in and off by default: nothing here talks to the router
+//! unless `upnp_enabled` is set. With it on, the desktop asks the router to
+//! map its port, learns its public address, and puts LAN and public
+//! addresses in the QR; the phone tries them in order. The same flag gates
+//! iroh's own gateway probing (UPnP, PCP, NAT-PMP). The listener is TLS with a self-signed identity the
 //! desktop mints once and keeps; the QR carries the certificate's SHA-256
 //! and the phone trusts that certificate and nothing else. The token is what
 //! stops a stranger who can reach the port; repeated bad tokens from one
@@ -82,6 +84,12 @@ pub struct Config {
     /// A custom iroh relay URL. None = iroh's default (n0) relays.
     #[serde(default)]
     pub iroh_relay_url: Option<String>,
+    /// Router port mapping. Off by default: the desktop never sends UPnP,
+    /// PCP or NAT-PMP to the gateway, neither for its own listener nor
+    /// through iroh. On, the listener's port is mapped and renewed while
+    /// remote is on, and iroh may map its UDP port for hole-punching.
+    #[serde(default)]
+    pub upnp_enabled: bool,
     /// The order phones try the roads, most preferred first — published in
     /// `/v1/status` and adopted by any phone that has not set its own.
     /// Always a permutation of the four (`load_config` makes it one).
@@ -106,6 +114,7 @@ impl Default for Config {
             vpn_enabled: true,
             relay_enabled: false,
             iroh_relay_url: None,
+            upnp_enabled: false,
             road_order: remote_roads::default_road_order(),
         }
     }
@@ -204,16 +213,22 @@ pub enum Event {
 struct Running {
     port: u16,
     handle: axum_server::Handle<SocketAddr>,
-    /// Set false to end the UPnP renewal loop.
-    upnp_alive: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Set false to end the UPnP renewal loop. None while UPnP is off.
+    upnp_alive: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// What the router said, for the panel and the QR.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct Reach {
     /// "off" | "searching" | "mapped" | "no_router" | "refused"
     upnp: String,
     public_ip: Option<IpAddr>,
+}
+
+impl Default for Reach {
+    fn default() -> Self {
+        Reach { upnp: "off".into(), public_ip: None }
+    }
 }
 
 /// A phone holding the event socket open — the definition of "connected".
@@ -323,7 +338,7 @@ impl Default for RemoteState {
             running: Mutex::new(None),
             tunnel: Mutex::new(None),
             phone_relay: Mutex::new(PhoneRelay { config: load_phone_relay(), ..Default::default() }),
-            reach: Mutex::new(Reach { upnp: "off".into(), public_ip: None }),
+            reach: Mutex::new(Reach::default()),
             clients: Mutex::new(HashMap::new()),
             next_client: std::sync::atomic::AtomicU64::new(1),
             usage_cache: Mutex::new(HashMap::new()),
@@ -519,15 +534,9 @@ fn start(app: &AppHandle) -> Result<(), String> {
             crate::diag!("remote", "listener ended: {e}");
         }
     });
-    let alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-    {
-        let app = app.clone();
-        let alive = alive.clone();
-        std::thread::spawn(move || keep_port_mapped(app, port, alive));
-    }
     // The iroh endpoint rides alongside: a config without a key yet (created
     // before this existed) gets one now, so its node id is stable from here on.
-    let (secret, relay_url, relay_road) = {
+    let (secret, relay_url, relay_road, upnp) = {
         let mut cfg = state.config.lock().unwrap();
         if crate::iroh_tunnel::secret_from_hex(&cfg.iroh_secret).is_none() {
             cfg.iroh_secret = crate::iroh_tunnel::new_secret_hex();
@@ -538,10 +547,12 @@ fn start(app: &AppHandle) -> Result<(), String> {
         } else {
             None
         };
-        (secret, cfg.iroh_relay_url.clone(), cfg.relay_enabled)
+        (secret, cfg.iroh_relay_url.clone(), cfg.relay_enabled, cfg.upnp_enabled)
     };
+    // The router is only asked when the person said so.
+    let alive = if upnp { Some(spawn_port_mapper(app, port)) } else { None };
     if let Some(secret) = secret {
-        spawn_tunnel(app, secret, port, relay_url);
+        spawn_tunnel(app, secret, port, relay_url, upnp);
     }
     // The relay road rides alongside too, when it is on and a route exists.
     if relay_road {
@@ -560,7 +571,9 @@ fn stop(app: &AppHandle) {
     let state = app.state::<RemoteState>();
     let taken = state.running.lock().unwrap().take();
     if let Some(running) = taken {
-        running.upnp_alive.store(false, std::sync::atomic::Ordering::Relaxed);
+        if let Some(alive) = running.upnp_alive {
+            alive.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
         running.handle.graceful_shutdown(Some(Duration::from_secs(2)));
         state.clients.lock().unwrap().clear();
         let _ = app.emit("remote://clients", ());
@@ -574,14 +587,41 @@ fn stop(app: &AppHandle) {
 }
 
 /// Bind the iroh endpoint on the runtime and keep it in state once it is up.
-fn spawn_tunnel(app: &AppHandle, secret: iroh::SecretKey, port: u16, relay_url: Option<String>) {
+fn spawn_tunnel(app: &AppHandle, secret: iroh::SecretKey, port: u16, relay_url: Option<String>, portmap: bool) {
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
-        match crate::iroh_tunnel::start(secret, port, relay_url).await {
+        match crate::iroh_tunnel::start(secret, port, relay_url, portmap).await {
             Ok(t) => *app2.state::<RemoteState>().tunnel.lock().unwrap() = Some(t),
             Err(e) => crate::diag!("remote", "{e}"),
         }
     });
+}
+
+/// Stop a running tunnel and bind a fresh one — the same key must not be
+/// bound twice, so the stop completes first. Used when a setting the
+/// endpoint was built with (relay URL, port mapping) changes while on.
+fn restart_tunnel(app: &AppHandle, secret: iroh::SecretKey, port: u16, relay_url: Option<String>, portmap: bool) {
+    let state = app.state::<RemoteState>();
+    let old = state.tunnel.lock().unwrap().take();
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Some(old) = old {
+            crate::iroh_tunnel::stop(old).await;
+        }
+        match crate::iroh_tunnel::start(secret, port, relay_url, portmap).await {
+            Ok(t) => *app2.state::<RemoteState>().tunnel.lock().unwrap() = Some(t),
+            Err(e) => crate::diag!("remote", "{e}"),
+        }
+    });
+}
+
+/// Start the router mapping thread for `port`; the returned flag ends it.
+fn spawn_port_mapper(app: &AppHandle, port: u16) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    let alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let app = app.clone();
+    let alive2 = alive.clone();
+    std::thread::spawn(move || keep_port_mapped(app, port, alive2));
+    alive
 }
 
 /// Start the relay connector for the enrolled phone route, if there is one
@@ -617,6 +657,8 @@ pub struct RemoteStatus {
     pub name: String,
     /// Addresses a phone might reach this machine on, best first.
     pub addresses: Vec<String>,
+    /// Whether router port mapping (UPnP) is turned on in the config.
+    pub upnp_enabled: bool,
     /// What the router said: "off" | "searching" | "mapped" | "no_router" | "refused".
     pub upnp: String,
     /// The address the internet sees, when the router told us.
@@ -706,6 +748,7 @@ fn status_of(app: &AppHandle) -> RemoteStatus {
         running,
         port: cfg.port,
         addresses: addresses(&cfg),
+        upnp_enabled: cfg.upnp_enabled,
         upnp: reach.upnp,
         public_address: reach.public_ip.map(|ip| ip.to_string()),
         fingerprint: identity().ok().map(|i| i.fingerprint),
@@ -831,7 +874,7 @@ pub fn remote_set_road(app: AppHandle, road: String, on: bool) -> Result<RemoteS
 
 fn set_road(app: &AppHandle, road: &str, on: bool) -> Result<(), String> {
     let state = app.state::<RemoteState>();
-    let (changed, port, secret, relay_url) = {
+    let (changed, port, secret, relay_url, upnp) = {
         let mut cfg = state.config.lock().unwrap();
         let field = match road {
             "lan" => &mut cfg.lan_enabled,
@@ -845,7 +888,7 @@ fn set_road(app: &AppHandle, road: &str, on: bool) -> Result<(), String> {
         if changed {
             save_config(&cfg);
         }
-        (changed, cfg.port, crate::iroh_tunnel::secret_from_hex(&cfg.iroh_secret), cfg.iroh_relay_url.clone())
+        (changed, cfg.port, crate::iroh_tunnel::secret_from_hex(&cfg.iroh_secret), cfg.iroh_relay_url.clone(), cfg.upnp_enabled)
     };
     if !changed {
         return Ok(());
@@ -855,7 +898,7 @@ fn set_road(app: &AppHandle, road: &str, on: bool) -> Result<(), String> {
         "iroh" if running => {
             if on {
                 if let Some(secret) = secret {
-                    spawn_tunnel(app, secret, port, relay_url);
+                    spawn_tunnel(app, secret, port, relay_url, upnp);
                 }
             } else if let Some(tunnel) = state.tunnel.lock().unwrap().take() {
                 tauri::async_runtime::spawn(crate::iroh_tunnel::stop(tunnel));
@@ -890,7 +933,7 @@ pub fn remote_set_iroh_relay_url(app: AppHandle, url: Option<String>) -> Result<
         u.parse::<iroh::RelayUrl>().map_err(|e| format!("Not a relay URL: {e}"))?;
     }
     let state = app.state::<RemoteState>();
-    let (changed, port, secret) = {
+    let (changed, port, secret, upnp) = {
         let mut cfg = state.config.lock().unwrap();
         let changed = cfg.iroh_relay_url != url;
         cfg.iroh_relay_url = url.clone();
@@ -898,24 +941,55 @@ pub fn remote_set_iroh_relay_url(app: AppHandle, url: Option<String>) -> Result<
             save_config(&cfg);
         }
         let secret = if cfg.iroh_enabled { crate::iroh_tunnel::secret_from_hex(&cfg.iroh_secret) } else { None };
-        (changed, cfg.port, secret)
+        (changed, cfg.port, secret, cfg.upnp_enabled)
     };
     let running = state.running.lock().unwrap().is_some();
     if changed && running {
         if let Some(secret) = secret {
-            let old = state.tunnel.lock().unwrap().take();
-            let app2 = app.clone();
-            // Stop before start: the same key must not be bound twice.
-            tauri::async_runtime::spawn(async move {
-                if let Some(old) = old {
-                    crate::iroh_tunnel::stop(old).await;
-                }
-                match crate::iroh_tunnel::start(secret, port, url).await {
-                    Ok(t) => *app2.state::<RemoteState>().tunnel.lock().unwrap() = Some(t),
-                    Err(e) => crate::diag!("remote", "{e}"),
-                }
-            });
+            restart_tunnel(&app, secret, port, url, upnp);
         }
+    }
+    Ok(status_of(&app))
+}
+
+/// Router port mapping on or off, live. On: the listener's port is mapped
+/// now and the iroh endpoint is rebound with its port mapper enabled. Off:
+/// the mapping is released and iroh is rebound without gateway probing.
+#[tauri::command]
+pub fn remote_set_upnp(app: AppHandle, on: bool) -> Result<RemoteStatus, String> {
+    let state = app.state::<RemoteState>();
+    let (changed, port, secret, url) = {
+        let mut cfg = state.config.lock().unwrap();
+        let changed = cfg.upnp_enabled != on;
+        cfg.upnp_enabled = on;
+        if changed {
+            save_config(&cfg);
+        }
+        let secret = if cfg.iroh_enabled { crate::iroh_tunnel::secret_from_hex(&cfg.iroh_secret) } else { None };
+        (changed, cfg.port, secret, cfg.iroh_relay_url.clone())
+    };
+    if !changed {
+        return Ok(status_of(&app));
+    }
+    let running = {
+        let mut running = state.running.lock().unwrap();
+        match running.as_mut() {
+            Some(r) => {
+                if let Some(alive) = r.upnp_alive.take() {
+                    alive.store(false, std::sync::atomic::Ordering::Relaxed);
+                }
+                if on {
+                    r.upnp_alive = Some(spawn_port_mapper(&app, port));
+                }
+                true
+            }
+            None => false,
+        }
+    };
+    if !running {
+        *state.reach.lock().unwrap() = Reach::default();
+    } else if let Some(secret) = secret {
+        restart_tunnel(&app, secret, port, url, on);
     }
     Ok(status_of(&app))
 }

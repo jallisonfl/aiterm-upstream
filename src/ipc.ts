@@ -1219,6 +1219,8 @@ export interface PhoneRemoteStatus {
   name: string;
   /** Addresses a phone might reach this machine on, best first. */
   addresses: string[];
+  /** Whether router port mapping (UPnP) is turned on. Off by default. */
+  upnp_enabled: boolean;
   /** What the router said: "off" | "searching" | "mapped" | "no_router" | "refused". */
   upnp: string;
   /** The address the internet sees, when the router told us. */
@@ -1308,6 +1310,10 @@ export const phoneRemoteSetRoad = (road: PhoneRemoteRoad, on: boolean) =>
  *  not set their own order pick it up on their next status read. */
 export const phoneRemoteSetRoadOrder = (order: PhoneRemoteRoad[]) =>
   invoke<PhoneRemoteStatus>("remote_set_road_order", { order });
+/** Router port mapping (UPnP) on or off, live. Off means the desktop never
+ *  talks to the gateway — not for its own port, not through iroh. */
+export const phoneRemoteSetUpnp = (on: boolean) =>
+  invoke<PhoneRemoteStatus>("remote_set_upnp", { on });
 /** A custom iroh relay (null = default). Restarts a running tunnel. */
 export const phoneRemoteSetIrohRelayUrl = (url: string | null) =>
   invoke<PhoneRemoteStatus>("remote_set_iroh_relay_url", { url });

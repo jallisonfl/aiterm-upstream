@@ -13,7 +13,7 @@
 //! speaks — same certificate pinning, same token — through whatever path
 //! iroh found. The relay sees TLS inside QUIC and can read neither.
 
-use iroh::endpoint::{presets, Connection, Endpoint, RecvStream, SendStream};
+use iroh::endpoint::{presets, Connection, Endpoint, PortmapperConfig, RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{RelayMode, RelayUrl, SecretKey};
 
@@ -101,11 +101,15 @@ async fn pump(mut send: SendStream, mut recv: RecvStream, port: u16) {
 /// Bind the endpoint and start forwarding to the local listener. With a
 /// `relay_url` the endpoint uses that relay alone instead of n0's — for a
 /// person who runs their own iroh-relay and wants no third party even for
-/// the fallback path.
-pub async fn start(secret: SecretKey, port: u16, relay_url: Option<String>) -> Result<Tunnel, String> {
+/// the fallback path. `portmap` is the router port-mapping setting: false
+/// (the default) keeps iroh from probing the gateway with UPnP, PCP or
+/// NAT-PMP; hole-punching through the relay still works without it.
+pub async fn start(secret: SecretKey, port: u16, relay_url: Option<String>, portmap: bool) -> Result<Tunnel, String> {
+    let portmapper = if portmap { PortmapperConfig::default() } else { PortmapperConfig::Disabled };
     let mut builder = Endpoint::builder(presets::N0)
         .secret_key(secret)
-        .alpns(vec![ALPN.to_vec()]);
+        .alpns(vec![ALPN.to_vec()])
+        .portmapper_config(portmapper);
     if let Some(url) = relay_url {
         let url: RelayUrl = url.parse().map_err(|e| format!("iroh relay URL {url:?} is invalid: {e}"))?;
         builder = builder.relay_mode(RelayMode::custom([url]));

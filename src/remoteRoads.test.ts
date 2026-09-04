@@ -16,6 +16,7 @@ function phone(over: Partial<PhoneRemoteStatus> & { relay?: Partial<PhoneRemoteS
     port: 8877,
     name: "office",
     addresses: [],
+    upnp_enabled: false,
     upnp: "off",
     public_address: null,
     fingerprint: null,
