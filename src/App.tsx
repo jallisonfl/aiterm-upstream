@@ -26,11 +26,16 @@ import PdfView, { isPdf } from "./components/PdfView";
 import AgentIcon from "./components/AgentIcon";
 import Icon from "./components/Icon";
 import HomeDashboard from "./components/HomeDashboard";
+import LiveLanes from "./components/LiveLanes";
+import CommandPalette from "./components/CommandPalette";
+import type { PaletteItem } from "./palette";
+import { useSpineOverview } from "./useSpineOverview";
+import { buildFleet } from "./fleet";
 import { useLibrarian } from "./librarian";
 import BringIn from "./components/BringIn";
 import { engineName, useRelay } from "./relay";
 import {
-  FolderOpen, GitBranch, Home, Keyboard, ListChecks, PanelLeft, RefreshCw, RotateCcw, Settings as SettingsIcon, Users, X,
+  Command, FolderOpen, GitBranch, Home, Keyboard, ListChecks, PanelLeft, RefreshCw, RotateCcw, Settings as SettingsIcon, Users, X,
 } from "lucide-react";
 import { agentTint } from "./brand";
 import SettingsModal, { SettingsTab } from "./components/SettingsModal";
@@ -44,7 +49,7 @@ import {
   Caps,
   ProjectInfo, Session,
   TrashedSession,
-  agentCaps,
+  agentCaps, homeAbbrev,
   listProjects, listSessions, materializeFork, relayReport,
   reindexSessions, sessionFork, uiLog, usageReport,
   resolveResumableId, liveSessionIds, stopSession, unstoppableSessionIds, sessionMovedTo,
@@ -2315,22 +2320,156 @@ export default function App() {
    */
   const homeFleetTabs = useMemo(() => {
     const ids = new Set(sessions.map((s) => s.id));
-    const live = new Set<string>();
-    const attention = new Set<string>();
-    const busy = new Set<string>();
+    const liveIds = new Set<string>();
+    const attentionIds = new Set<string>();
+    const busyIds = new Set<string>();
     const sessionTabs = new Set<TabId>();
     for (const t of tabs) {
       if (!t.slotId || !ids.has(t.slotId)) continue;
       sessionTabs.add(t.key);
-      live.add(t.slotId);
-      if (attention.has(t.key)) attention.add(t.slotId);
-      if (progress.has(t.key)) busy.add(t.slotId);
+      liveIds.add(t.slotId);
+      // These read App's own `attention`/`progress` maps (keyed by tab); the
+      // sets being built used to shadow them, so the fallback was always empty.
+      if (attention.has(t.key)) attentionIds.add(t.slotId);
+      if (progress.has(t.key)) busyIds.add(t.slotId);
     }
     return {
-      live, attention, busy,
+      live: liveIds, attention: attentionIds, busy: busyIds,
       otherAlerts: alerts.filter((a) => !sessionTabs.has(a.key)),
     };
   }, [sessions, tabs, attention, progress, alerts]);
+
+  /** The spine's per-session phase, polled for the whole window — the
+   *  sidebar lanes, the badge and the palette all read it, not only home. */
+  const overview = useSpineOverview(true);
+
+  /** Every session blocked on a person, most recent first — the queue the
+   *  Ctrl+Shift+A hotkey walks and the badge counts. */
+  const blocked = useMemo(
+    () => buildFleet({
+      sessions, overview,
+      live: homeFleetTabs.live, attention: homeFleetTabs.attention, busy: homeFleetTabs.busy, cap: 0,
+    }).needsYou.map((r) => r.session),
+    [sessions, overview, homeFleetTabs],
+  );
+  const blockedRef = useRef(blocked);
+  blockedRef.current = blocked;
+  // `selectSession` closes over `tabs`; the hotkey must see the current one.
+  const selectSessionRef = useRef(selectSession);
+  selectSessionRef.current = selectSession;
+  const otherAlertsRef = useRef(homeFleetTabs.otherAlerts);
+  otherAlertsRef.current = homeFleetTabs.otherAlerts;
+  const blockedCount = blocked.length + homeFleetTabs.otherAlerts.length;
+
+  /** Jump to the next session waiting on you, cycling from the one on
+   *  screen — so clearing a queue of four is four presses, no reading. */
+  const goNextBlocked = useCallback(() => {
+    const queue = blockedRef.current;
+    const shells = otherAlertsRef.current;
+    if (queue.length === 0 && shells.length === 0) return;
+    const cur = tabsRef.current.find((t) => t.key === activeTabRef.current);
+    const idx = cur ? queue.findIndex((s) => s.id === cur.slotId) : -1;
+    if (idx >= 0 && idx + 1 >= queue.length && shells.length > 0) {
+      setPreviewSession(null); setActiveFileTab(null); setActiveTab(shells[0].key);
+      return;
+    }
+    const next = queue[(idx + 1) % Math.max(1, queue.length)];
+    if (next) { selectSessionRef.current(next); return; }
+    setPreviewSession(null); setActiveFileTab(null); setActiveTab(shells[0].key);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  /** What the palette can reach. Rebuilt when any input moves; the palette
+   *  ranks it per keystroke. Sessions are capped — search in the sidebar
+   *  reaches the archive; the palette is for what you were just doing. */
+  const paletteItems = useMemo((): PaletteItem[] => {
+    const items: PaletteItem[] = [];
+    const seen = new Set<string>();
+    for (const s of blocked) {
+      seen.add(s.id);
+      const ov = overview.get(s.id);
+      items.push({
+        id: `need:${s.id}`, group: "Needs you", rank: 0,
+        title: s.title, subtitle: ov?.detail || homeAbbrev(s.project_path), keywords: s.agent,
+        run: () => selectSession(s),
+      });
+    }
+    for (const a of homeFleetTabs.otherAlerts) {
+      items.push({
+        id: `alert:${a.key}`, group: "Needs you", rank: 0, title: a.title, subtitle: a.message ?? "Waiting for your input",
+        run: () => { setPreviewSession(null); setActiveFileTab(null); setActiveTab(a.key); },
+      });
+    }
+    for (const t of tabs.filter((t) => t.parentKey === undefined)) {
+      items.push({
+        id: `tab:${t.key}`, group: "Open tabs", rank: 1, title: t.title, subtitle: t.cwd ? homeAbbrev(t.cwd) : undefined,
+        keywords: t.agentId ?? "", run: () => { setPreviewSession(null); setActiveFileTab(null); setActiveTab(t.key); },
+      });
+    }
+    const recent = [...sessions].sort((a, b) => b.last_active - a.last_active).slice(0, 200);
+    for (const s of recent) {
+      if (seen.has(s.id)) continue;
+      items.push({
+        id: `s:${s.id}`, group: "Sessions", rank: 2, title: s.title,
+        subtitle: homeAbbrev(s.project_path) + (s.branch ? `  ${s.branch}` : ""), keywords: s.agent,
+        run: () => selectSession(s),
+      });
+    }
+    const where = homeCwd ? homeAbbrev(homeCwd) : "";
+    for (const a of emptyCtl.agents) {
+      items.push({
+        id: `new:${a.id}`, group: "Actions", rank: 3, title: `New ${a.display_name} session`, subtitle: where, keywords: "start launch",
+        run: () => { if (homeCwd) void newSession(homeCwd, { kind: "agent", agentId: a.id, model: null, effort: null }); },
+      });
+    }
+    const act = (id: string, title: string, run: () => void, keywords = "") =>
+      items.push({ id: `act:${id}`, group: "Actions", rank: 3, title, keywords, run });
+    act("next", "Next session that needs you", goNextBlocked, "blocked attention jump ctrl+shift+a");
+    act("home", "Home", goHome, "dashboard launcher");
+    act("sessions", (showSessions ? "Hide" : "Show") + " sessions sidebar", () => setShowSessions(!showSessions), "panel toggle");
+    act("explorer", (showExplorer ? "Hide" : "Show") + " file explorer", () => setShowExplorer(!showExplorer), "panel toggle files");
+    act("git", (showGit ? "Hide" : "Show") + " repository panel", () => setShowGit(!showGit), "panel toggle git");
+    act("agent", (showAgent ? "Hide" : "Show") + " tasks panel", () => setShowAgent(!showAgent), "panel toggle agent");
+    act("composer", (showComposer ? "Hide" : "Show") + " composer", () => setShowComposer(!showComposer), "panel toggle input");
+    act("settings", "Settings", () => setShowSettingsModal(true), "preferences theme");
+    act("refresh", "Refresh sessions", () => { void refreshSessions(); }, "reload reindex");
+    for (const p of projects) {
+      items.push({
+        id: `proj:${p.path}`, group: "Projects", rank: 4, title: homeAbbrev(p.path), keywords: "project folder",
+        run: () => selectProject(p),
+      });
+    }
+    return items;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocked, overview, homeFleetTabs.otherAlerts, tabs, sessions, projects, homeCwd, emptyCtl.agents,
+      showSessions, showExplorer, showGit, showAgent, showComposer, goNextBlocked]);
+
+  // Ctrl+Shift+P: the palette. Ctrl+Shift+A: next session that needs you.
+  // Ctrl+1…9: the Nth session tab. All captured before xterm, like the rest.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.altKey || e.metaKey) return;
+      if (e.shiftKey && (e.key === "P" || e.key === "p")) {
+        e.preventDefault(); setPaletteOpen((v) => !v); return;
+      }
+      if (e.shiftKey && (e.key === "A" || e.key === "a")) {
+        e.preventDefault(); goNextBlocked(); return;
+      }
+      if (e.shiftKey) return;
+      if (e.key >= "1" && e.key <= "9") {
+        const list = tabsRef.current.filter((t) => t.parentKey === undefined);
+        const t = list[Number(e.key) - 1];
+        if (!t) return;
+        e.preventDefault();
+        setPreviewSession(null); setActiveFileTab(null); setActiveTab(t.key);
+        handles.current.get(t.key)?.focus();
+      }
+    };
+    window.addEventListener("keydown", h, true);
+    return () => window.removeEventListener("keydown", h, true);
+  }, [goNextBlocked]);
 
   /** "Show all" on the board: the whole list is the sidebar's job, so open it
    *  and put the cursor in its search box rather than growing a second one. */
@@ -2516,9 +2655,17 @@ export default function App() {
         <div className="topbar-left">
           <button
             className={"icon-btn" + (showSessions ? " on" : "")}
-            title="Toggle sessions panel"
+            title={blockedCount > 0 ? `Toggle sessions panel — ${blockedCount} waiting on you` : "Toggle sessions panel"}
             onClick={() => setShowSessions(!showSessions)}
-          ><Icon of={PanelLeft} /></button>
+          >
+            <Icon of={PanelLeft} />
+            {blockedCount > 0 && <span className="icon-badge">{blockedCount}</span>}
+          </button>
+          <button
+            className="icon-btn"
+            title="Command palette (Ctrl+Shift+P) — jump anywhere, start anything"
+            onClick={() => setPaletteOpen(true)}
+          ><Icon of={Command} /></button>
           <button
             className={"icon-btn" + (explorerOnScreen ? " on" : "")}
             title={onHome ? "File explorer — opens with a session" : "Toggle file explorer"}
@@ -2563,6 +2710,18 @@ export default function App() {
         {showSessions && (
           <>
             <div className="panel sessions" style={{ width: sizes.left, ...zoomFor("sessions") }}>
+              <LiveLanes
+                sessions={sessions}
+                overview={overview}
+                liveIds={homeFleetTabs.live}
+                attentionIds={homeFleetTabs.attention}
+                busyIds={homeFleetTabs.busy}
+                otherAlerts={homeFleetTabs.otherAlerts}
+                activeSlot={activeTabObj?.slotId ?? null}
+                onSelect={selectSession}
+                onResume={(s) => { void resumeSession(s); }}
+                onGoTab={(key) => { setPreviewSession(null); setActiveFileTab(null); setActiveTab(key); }}
+              />
               <SessionsPanel
                 hoverSummary={settings.sessionHover}
                 sessions={sessions}
@@ -3127,6 +3286,9 @@ export default function App() {
           </>
         )}
       </div>
+      {paletteOpen && (
+        <CommandPalette items={paletteItems} onClose={() => setPaletteOpen(false)} />
+      )}
       {showSettingsModal && (
         <SettingsModal
           settings={settings}
