@@ -193,7 +193,7 @@ needs `cargo-ndk`, the `aarch64-linux-android` Rust target, and Android NDK
 ```sh
 rustup target add aarch64-linux-android
 cargo install cargo-ndk --locked
-cd android && ./gradlew testDebugUnitTest assembleDebug
+cd relay/gateway-android && ./gradlew testDebugUnitTest assembleDebug
 ```
 
 ## Terminal image attachments
@@ -275,7 +275,7 @@ For the paired Pixel used during the 2026-08-31 verification, the serial was
 Build, install, and test without disturbing the Android Keystore pairing key:
 
 ```bash
-cd android
+cd relay/gateway-android
 ./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
 adb -s <PIXEL_SERIAL> install -r "$PWD/app/build/outputs/apk/debug/app-debug.apk"
 adb -s <PIXEL_SERIAL> install -r -t "$PWD/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
