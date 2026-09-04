@@ -53,7 +53,7 @@ Pair once by QR (single-use secret, 5-minute expiry, certificate fingerprint pin
 |---|---|
 | **LAN** | same network |
 | **VPN** | Tailscale / WireGuard, MagicDNS names included |
-| **Relay** | blind SNI-routed relay when neither side is reachable |
+| **Relay** | blind SNI-routed relay when neither side is reachable (`relay/server`, self-hostable) |
 | **iroh** | peer-to-peer QUIC with relay fallback, no server of ours |
 
 Any set of roads on at once, tried in an order you can reorder from either end.
@@ -88,7 +88,8 @@ npm run tauri build -- --bundles appimage,deb  # release build
 ```
 
 ```bash
-cd mobile && ./gradlew assembleDebug           # phone APK → app/build/outputs/apk/debug/
+cd mobile && ./gradlew assembleDebug                 # phone APK → app/build/outputs/apk/debug/
+cd relay/gateway-android && ./gradlew assembleDebug  # Gateway listener's Android client (optional)
 ```
 
 Prerequisites: Rust toolchain, Node 22+, Tauri 2 Linux deps (`libwebkit2gtk-4.1-dev`, `libappindicator3-dev`, `librsvg2-dev`, `patchelf`), JDK 21 + Android SDK for the phone app, `sqlite3` binary for OpenCode sessions. Re-run `npm install` after pulling a commit that adds packages.

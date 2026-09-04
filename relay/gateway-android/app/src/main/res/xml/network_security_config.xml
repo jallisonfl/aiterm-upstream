@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The client only ever talks to a desktop whose self-signed certificate was
+  pinned during pairing, so cleartext is forbidden everywhere with no
+  per-domain exception and no debug-build escape hatch.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>
