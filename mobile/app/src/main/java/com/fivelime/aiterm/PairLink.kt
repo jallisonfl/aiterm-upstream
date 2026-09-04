@@ -10,7 +10,7 @@ package com.fivelime.aiterm
  *  host list rides as repeated `th`; when it is there `h` is the gateway's
  *  and we leave it alone.
  *
- *  Roads (docs/remote-roads.md): `tr`/`tq` name a live or drafted relay
+ *  Roads (docs/remote/remote-roads.md): `tr`/`tq` name a live or drafted relay
  *  route; `ta` is the enrollment digest the phone signs to make a draft
  *  live. Each is optional and each is dropped, not guessed at, when
  *  malformed. */

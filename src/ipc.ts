@@ -1232,7 +1232,7 @@ export interface PhoneRemoteStatus {
   iroh_enabled: boolean;
   /** The reach-from-anywhere address: this desktop's iroh node id. */
   iroh_node: string | null;
-  /** Which roads are on — see docs/remote-roads.md. */
+  /** Which roads are on — see docs/remote/remote-roads.md. */
   roads: PhoneRemoteRoads;
   /** What the VPN road sees on this machine right now. */
   vpn: PhoneRemoteVpn;

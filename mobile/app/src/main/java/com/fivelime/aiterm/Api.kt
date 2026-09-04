@@ -182,7 +182,7 @@ class Api(val baseUrl: String, private val token: String, fingerprint: String, c
     suspend fun conversation(id: String): List<Turn> = json.decodeFromString(call(req("/v1/sessions/$id/conversation")))
     /** Everything on this session's spine after `after` (0 = all). Asking
      *  is also how the desktop learns a phone is watching: it starts (or
-     *  keeps) the adapter tail. See docs/spine.md. */
+     *  keeps) the adapter tail. See docs/architecture/spine.md. */
     suspend fun spine(id: String, after: Long): SpineResponse =
         SpineResponse.parse(json.parseToJsonElement(call(req("/v1/sessions/$id/spine?after=$after"))).jsonObject)
     suspend fun agents(): List<Agent> = json.decodeFromString(call(req("/v1/agents")))

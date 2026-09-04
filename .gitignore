@@ -35,9 +35,8 @@ PORTING-TO-OPCODE.md
 .claude/
 
 # Files that hand rules to an agent or to contributors. Kept out of the repo on
-# purpose: the working agreement here is Matt's to set, not a file's, and one of
-# these landing in a clone quietly governs every agent that opens it. Ignored
-# rather than merely deleted so `git add .` in any clone cannot bring one back.
+# purpose: one of these landing in a clone quietly governs every agent that opens
+# it. Ignored rather than merely deleted so `git add .` cannot bring one back.
 AGENTS.md
 CLAUDE.md
 GEMINI.md
@@ -49,17 +48,18 @@ CONVENTIONS.md
 .cursor/
 .aider*
 
-# Android companion app build output. The Gradle wrapper (gradlew, gradlew.bat,
-# gradle/wrapper/*) is committed on purpose so a clone builds without a local
-# Gradle install.
-android/build/
-android/app/build/
-android/quic-bridge/target/
-android/.gradle/
-android/local.properties
+# Relay: server build output + machine-local secrets, protocol crate build output.
+relay/server/target/
+relay/server/relay.json
+relay/protocol/target/
+relay/protocol/Cargo.lock
 
-# Standalone AITerm relay build output and its machine-local secrets.
-relay/target/
-relay/relay.json
-relay-protocol/target/
-relay-protocol/Cargo.lock
+# Phone app build output. The Gradle wrapper is committed on purpose so a clone
+# builds without a local Gradle install.
+mobile/build/
+mobile/app/build/
+mobile/.gradle/
+mobile/local.properties
+
+# Local harness audit notes — never published.
+harness-audit/

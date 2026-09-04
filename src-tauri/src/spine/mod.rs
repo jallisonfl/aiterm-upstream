@@ -1,7 +1,7 @@
 //! The spine: one live event stream for every harness.
 //!
 //! Every engine feeds it through an [`Adapter`]; every consumer (the phone
-//! first) reads one vocabulary. See `docs/spine.md` for the contract. The
+//! first) reads one vocabulary. See `docs/architecture/spine.md` for the contract. The
 //! types and the trait here ARE the contract — change them only by
 //! agreement, everything else is free.
 
