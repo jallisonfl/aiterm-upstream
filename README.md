@@ -10,6 +10,8 @@ aiterm puts a real terminal in the middle and surfaces everything the agent keep
 
 Linux-first (Fedora and Ubuntu daily). Tauri 2 + Rust, React, xterm.js. Not a re-implementation of any CLI: **the terminal is the terminal.**
 
+**User manual:** the [wiki](https://github.com/jallisonfl/aiterm-upstream/wiki) — install, engines, phone pairing, settings, troubleshooting.
+
 ---
 
 ## Why aiterm
