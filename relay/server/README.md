@@ -50,7 +50,7 @@ cargo build --release --manifest-path relay/Cargo.toml
 The daemon takes one JSON configuration path:
 
 ```sh
-./relay/target/release/aiterm-relay /etc/aiterm-relay/relay.json
+./relay/server/target/release/aiterm-relay /etc/aiterm-relay/relay.json
 ```
 
 `relay.example.json` documents the configuration. Connector tokens are random
