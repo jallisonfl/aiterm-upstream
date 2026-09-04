@@ -10,6 +10,8 @@ aiterm puts a real terminal in the middle and surfaces everything the agent keep
 
 Linux-first (Fedora and Ubuntu daily). Tauri 2 + Rust, React, xterm.js. Not a re-implementation of any CLI: **the terminal is the terminal.**
 
+**User manual:** the [wiki](https://github.com/jallisonfl/aiterm-upstream/wiki) — install, engines, phone pairing, settings, troubleshooting.
+
 ---
 
 ## Why aiterm
@@ -99,9 +101,8 @@ Large workspaces can exhaust `fs.inotify.max_user_watches`; if diffs or transcri
 ## Branches and versions
 
 ```
-main          stable — every commit is releasable, tagged vX.Y.Z
-5lime-dev     daily development — nightlies and alphas are cut from here
-feat/<slug>   one feature each, merged into 5lime-dev with --no-ff
+5lime-dev     where everything happens — one commit per feature, pushed as you go
+main          stable — moves only when a version is cut, tagged vX.Y.Z
 release/X.Y   only while a beta is being stabilised
 ```
 

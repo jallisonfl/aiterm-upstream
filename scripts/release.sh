@@ -26,7 +26,7 @@ sed -i "0,/\"version\": \".*\"/s//\"version\": \"$cargo_ver\"/" src-tauri/tauri.
 # keep Cargo.lock's own entry in step (no network needed)
 sed -i "/^name = \"aiterm\"$/{n;s/^version = \".*\"/version = \"$cargo_ver\"/}" src-tauri/Cargo.lock
 git add src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json package.json
-git commit -q -m "Version $cargo_ver"
+git diff --cached --quiet || git commit -q -m "Version $cargo_ver"   # no-op when the files already say this version
 git tag -a "$tag" -m "$tag"
 git push "$remote" "$branch" "$tag"
 echo "$tag on $branch -> $(git rev-parse --short HEAD)"
