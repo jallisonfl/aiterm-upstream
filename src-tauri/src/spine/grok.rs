@@ -1,7 +1,7 @@
 //! Grok adapter: `~/.grok/sessions/<cwd>/<id>/updates.jsonl` (an on-disk ACP
 //! `session/update` stream) plus `events.jsonl` for turns and permissions.
 //!
-//! Owned by the grok-adapter task. See `docs/spine.md`.
+//! Owned by the grok-adapter task. See `docs/architecture/spine.md`.
 //!
 //! `updates.jsonl` is one JSON-RPC notification per line, appended as the
 //! turn runs. The two methods that appear are `session/update` (plain ACP)

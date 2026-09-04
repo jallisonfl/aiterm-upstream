@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust 2021, Tauri 2, Tokio/Axum, rustls, CBOR/serde, Kotlin, Jetpack Compose, Android Keystore/BiometricPrompt, CameraX/ML Kit, OkHttp WebSocket, a native Kotlin terminal emulator.
 
-**Spec:** `docs/superpowers/specs/2026-08-28-android-remote-client.md`
+**Spec:** `docs/design/2026-08-28-android-remote-client.md`
 
 ## Execution status
 
@@ -485,7 +485,7 @@ git commit -m "feat(android): control paired desktop sessions"
 ### Task 10: End-to-end security and release verification
 
 **Files:**
-- Create: `docs/android-remote-testing.md`
+- Create: `docs/remote/android-remote-testing.md`
 - Modify: `README.md`
 - Test: `src-tauri/tests/remote_e2e.rs`
 
@@ -519,7 +519,7 @@ Expected: PASS, with any pre-existing backend failure separately documented rath
 - [ ] **Step 5: Commit**
 
 ```bash
-git add README.md docs/android-remote-testing.md src-tauri/tests/remote_e2e.rs
+git add README.md docs/remote/android-remote-testing.md src-tauri/tests/remote_e2e.rs
 git commit -m "docs: document Android remote access"
 ```
 

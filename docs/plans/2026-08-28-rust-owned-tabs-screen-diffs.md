@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust 2021, Tauri 2, `portable-pty` 0.9, exact `alacritty_terminal` 0.26.0, serde/CBOR, Tokio channels, React/TypeScript, xterm.js, Node test runner.
 
-**Spec:** `docs/superpowers/specs/2026-08-28-android-remote-client.md`
+**Spec:** `docs/design/2026-08-28-android-remote-client.md`
 
 ## Global Constraints
 
@@ -541,8 +541,8 @@ git commit -m "feat(remote): stream canonical terminal screen diffs"
 ### Task 7: Verify bounds, desktop independence, and documentation
 
 **Files:**
-- Modify: `docs/android-remote-testing.md`
-- Modify: `docs/superpowers/plans/2026-08-28-android-remote-client.md`
+- Modify: `docs/remote/android-remote-testing.md`
+- Modify: `docs/plans/2026-08-28-android-remote-client.md`
 - Test: all touched Rust and desktop suites.
 
 **Interfaces:**
@@ -583,7 +583,7 @@ With Remote Access disabled: open a shell and Codex tab, type and paste Unicode,
 Run: `git status --short && git diff --stat origin/main...HEAD && git diff --check origin/main...HEAD`
 
 ```bash
-git add docs/android-remote-testing.md docs/superpowers/plans/2026-08-28-android-remote-client.md
+git add docs/remote/android-remote-testing.md docs/plans/2026-08-28-android-remote-client.md
 git commit -m "docs: record Rust terminal screen verification"
 ```
 

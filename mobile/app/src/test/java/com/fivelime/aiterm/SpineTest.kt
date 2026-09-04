@@ -9,7 +9,7 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The phone's half of docs/spine.md. Everything here is the wire shape the
+/** The phone's half of docs/architecture/spine.md. Everything here is the wire shape the
  *  desktop's `SpineEvent` serialises to: flat, with `kind` as the tag. */
 class SpineTest {
     private fun obj(s: String): JsonObject = Json.parseToJsonElement(s).jsonObject

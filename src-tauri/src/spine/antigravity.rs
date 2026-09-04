@@ -2,7 +2,7 @@
 //! `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl`,
 //! read from a byte offset, one JSON object per step.
 //!
-//! Owned by the antigravity-adapter task. See `docs/spine.md`.
+//! Owned by the antigravity-adapter task. See `docs/architecture/spine.md`.
 //!
 //! agy appends one record per *step* as a turn runs, and a step is the unit
 //! of everything here:

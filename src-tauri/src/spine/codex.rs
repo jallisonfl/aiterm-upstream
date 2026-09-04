@@ -2,7 +2,7 @@
 //! `~/.codex/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<id>.jsonl`, read from a
 //! byte offset, one JSON record per line.
 //!
-//! Owned by the codex-adapter task. See `docs/spine.md`.
+//! Owned by the codex-adapter task. See `docs/architecture/spine.md`.
 //!
 //! The rollout is append-only while a session runs — every record carries a
 //! monotonic `ordinal` and nothing above it is ever rewritten — so the tail is

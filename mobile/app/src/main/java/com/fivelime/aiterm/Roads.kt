@@ -1,6 +1,6 @@
 package com.fivelime.aiterm
 
-/** The ways a phone can reach a desktop (docs/remote-roads.md). Every road
+/** The ways a phone can reach a desktop (docs/remote/remote-roads.md). Every road
  *  carries the same pinned TLS; they differ only in how the bytes get there
  *  and which the person would rather use first. */
 enum class Road(val id: String, val title: String, val blurb: String) {

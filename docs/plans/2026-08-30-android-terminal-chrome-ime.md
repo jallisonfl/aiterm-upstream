@@ -8,7 +8,7 @@
 
 **Tech Stack:** Kotlin 2.4, Jetpack Compose/Material 3, Android SharedPreferences, Kotlin coroutines Flow, JUnit 4, Compose instrumentation tests.
 
-**Spec:** `docs/superpowers/specs/2026-08-30-android-terminal-composer-attachments.md`
+**Spec:** `docs/design/2026-08-30-android-terminal-composer-attachments.md`
 
 ## Global Constraints
 

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust (serde_json with `preserve_order`), Tauri 2 commands, React + TypeScript, `node --experimental-strip-types --test`.
 
-**Spec:** `docs/superpowers/specs/2026-08-06-claude-config-editing-design.md`
+**Spec:** `docs/design/2026-08-06-claude-config-editing-design.md`
 
 ## Global Constraints
 

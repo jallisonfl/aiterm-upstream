@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust 2021, Axum WebSocket gateway, serde/ciborium CBOR, SHA-256, `image` 0.25.10 with JPEG-only features, Kotlin 2.4, Android Activity Result APIs, Jetpack Compose/Material 3, coroutines, JUnit 4, Rust integration tests.
 
-**Spec:** `docs/superpowers/specs/2026-08-30-android-terminal-composer-attachments.md`
+**Spec:** `docs/design/2026-08-30-android-terminal-composer-attachments.md`
 
 ## Global Constraints
 
@@ -508,7 +508,7 @@ git commit -m "feat(android): attach photos to terminal prompts"
 
 **Files:**
 - Modify if required by verified defects: files owned by Tasks 1–7 only.
-- Update: `docs/android-remote-testing.md`
+- Update: `docs/remote/android-remote-testing.md`
 
 **Interfaces:**
 - Consumes: completed desktop upload protocol and Android attachment UI.
@@ -547,9 +547,9 @@ Observe that UI remains responsive during 4096-pixel normalization, upload progr
 
 - [ ] **Step 5: Document the in-place workflow and commit**
 
-Add camera/gallery cases, cache/TTL locations, failure recovery, and the exact pairing-preserving ADB commands to `docs/android-remote-testing.md`.
+Add camera/gallery cases, cache/TTL locations, failure recovery, and the exact pairing-preserving ADB commands to `docs/remote/android-remote-testing.md`.
 
 ```bash
-git add docs/android-remote-testing.md
+git add docs/remote/android-remote-testing.md
 git commit -m "docs: cover Android terminal image testing"
 ```

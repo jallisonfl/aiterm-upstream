@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust (Tauri 2 commands, `serde_json`, `curl` subprocess — the project pulls in no TLS stack), React 19 + TypeScript, `cargo test` and `node --test`.
 
-**Spec:** `docs/superpowers/specs/2026-08-10-openrouter-provider-routing-design.md`. Read it before Task 1; it records six facts that were verified by experiment and that this plan depends on.
+**Spec:** `docs/design/2026-08-10-openrouter-provider-routing-design.md`. Read it before Task 1; it records six facts that were verified by experiment and that this plan depends on.
 
 ## Global Constraints
 

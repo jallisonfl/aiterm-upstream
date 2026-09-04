@@ -1,7 +1,7 @@
 //! Claude Code adapter: the transcript at `~/.claude/projects/<proj>/<id>.jsonl`,
 //! read from a byte offset, one line per content block.
 //!
-//! Owned by the claude-adapter task. See `docs/spine.md`.
+//! Owned by the claude-adapter task. See `docs/architecture/spine.md`.
 //!
 //! The file is append-only while a session runs, so the tail is a seek to the
 //! saved offset and a read to EOF — no re-parse of the history. Two things
