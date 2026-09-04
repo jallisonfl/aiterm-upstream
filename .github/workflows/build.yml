@@ -1,0 +1,47 @@
+# Every push to 5lime-dev (and every PR) builds the desktop app and keeps the
+# result for a week as a downloadable "build" artifact. This is the daytime
+# "active build": nothing is tagged or released here.
+name: build
+
+on:
+  push:
+    branches: [5lime-dev, main, 'feat/**', 'release/**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tauri system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libsqlite3-dev
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: src-tauri }
+      - run: npm ci
+      - name: Typecheck + UI tests
+        run: npx tsc --noEmit && npm run test:ui --if-present
+      - name: Rust tests (serial — some tests set HOME)
+        run: cd src-tauri && cargo test --lib -- --test-threads=1
+      - name: Build (AppImage + deb)
+        run: npm run tauri build -- --bundles appimage,deb
+      - name: Stamp
+        id: stamp
+        run: echo "name=aiterm-build-$(date -u +%Y%m%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.stamp.outputs.name }}
+          retention-days: 7
+          path: |
+            src-tauri/target/release/aiterm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb

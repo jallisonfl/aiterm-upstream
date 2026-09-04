@@ -1,0 +1,80 @@
+# Releases are TAGS, never branches.
+#   nightly-YYYYMMDD      -> prerelease "Nightly YYYY-MM-DD"     (from 5lime-dev)
+#   vX.Y.Z-alpha.N        -> prerelease "X.Y.Z alpha N"          (from 5lime-dev)
+#   vX.Y.Z-beta.N         -> prerelease "X.Y.Z beta N"           (from release/X.Y)
+#   vX.Y.Z                -> release    "X.Y.Z"  marked latest   (from main)
+# The nightly tag is normally cut by scripts/nightly.sh; the cron below cuts one
+# automatically at 23:40 America/New_York if 5lime-dev moved and nobody did.
+name: release
+
+on:
+  push:
+    tags: ['nightly-*', 'v*']
+  schedule:
+    - cron: '40 3 * * *'   # 23:40 ET (EDT); GitHub cron is UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  auto-nightly:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: 5lime-dev, fetch-depth: 0 }
+      - name: Tag tonight's nightly if 5lime-dev moved
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          day=$(TZ=America/New_York date +%Y%m%d)
+          git fetch --tags
+          last=$(git tag -l 'nightly-*' --sort=-v:refname | head -1)
+          if [ -n "$last" ] && [ "$(git rev-parse "$last")" = "$(git rev-parse HEAD)" ]; then
+            echo "5lime-dev unchanged since $last — no nightly"; exit 0; fi
+          git tag -l "nightly-$day" | grep -q . && { echo "nightly-$day exists"; exit 0; }
+          git config user.name  github-actions
+          git config user.email github-actions@github.com
+          git tag -a "nightly-$day" -m "Nightly $day"
+          git push origin "nightly-$day"
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tauri system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libsqlite3-dev
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: src-tauri }
+      - run: npm ci
+      - name: Build desktop (AppImage + deb + rpm)
+        run: npm run tauri build -- --bundles appimage,deb,rpm
+      - name: Build phone APK (mobile/)
+        continue-on-error: true
+        run: cd mobile && chmod +x gradlew && ./gradlew --no-daemon assembleDebug && cp app/build/outputs/apk/debug/app-debug.apk "../aiterm-phone-${GITHUB_REF_NAME}.apk"
+      - name: Classify tag
+        id: tag
+        run: |
+          t="$GITHUB_REF_NAME"
+          case "$t" in
+            nightly-*) echo "title=Nightly ${t#nightly-}" >> $GITHUB_OUTPUT; echo "pre=true"  >> $GITHUB_OUTPUT ;;
+            *-alpha.*|*-beta.*|*-rc.*) echo "title=${t#v}" >> $GITHUB_OUTPUT; echo "pre=true"  >> $GITHUB_OUTPUT ;;
+            v*)        echo "title=${t#v}" >> $GITHUB_OUTPUT; echo "pre=false" >> $GITHUB_OUTPUT ;;
+          esac
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.tag.outputs.title }}
+          prerelease: ${{ steps.tag.outputs.pre }}
+          make_latest: ${{ steps.tag.outputs.pre == 'false' }}
+          generate_release_notes: true
+          files: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            aiterm-phone-*.apk

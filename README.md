@@ -1,94 +1,117 @@
 # aiterm
 
-A desktop workbench for running [Claude Code](https://claude.com/claude-code) sessions — a real terminal in the middle, with the state Claude keeps on disk surfaced as first-class UI around it.
+**One workbench for every AI coding CLI you run — and your phone as a second screen for all of it.**
 
-Built with Tauri 2, React, and xterm.js. Linux-first (developed and packaged on Fedora); the stack is cross-platform but other platforms are untested.
+aiterm puts a real terminal in the middle and surfaces everything the agent keeps on disk — sessions, files, diffs, tasks, usage — as first-class UI around it. Claude Code, Codex, Grok, OpenCode, Antigravity and any OpenAI-compatible API or local model, in one sidebar, one search, one conversation view. Pair an Android phone and carry the same sessions anywhere.
 
-> **Work in progress.** aiterm is built around one person's daily use and
-> released often, so interfaces move and rough edges are expected. Free to
-> build, run and modify for your own use, at home or at work — but it is not
-> open source: it may not be sold, offered as a service, or redistributed.
-> See [LICENSE](LICENSE).
+[![Latest release](https://img.shields.io/github/v/release/jallisonfl/aiterm-upstream?label=stable)](https://github.com/jallisonfl/aiterm-upstream/releases/latest)
+[![Nightly](https://img.shields.io/github/v/release/jallisonfl/aiterm-upstream?include_prereleases&label=nightly)](https://github.com/jallisonfl/aiterm-upstream/releases)
+[![Build](https://github.com/jallisonfl/aiterm-upstream/actions/workflows/build.yml/badge.svg?branch=5lime-dev)](https://github.com/jallisonfl/aiterm-upstream/actions/workflows/build.yml)
 
-## What it does
+Linux-first (Fedora and Ubuntu daily). Tauri 2 + Rust, React, xterm.js. Not a re-implementation of any CLI: **the terminal is the terminal.**
 
-- **Real terminals.** Each tab is a native PTY running `claude` (or a plain shell). No re-implementation of the CLI — the terminal is the terminal.
-- **New sessions.** ＋ in the sessions panel starts a fresh `claude` in any directory — filter the ones you already work in, or pick a folder. aiterm mints the session id, so the new tab gets its sidebar row immediately instead of waiting for the first prompt to write a transcript.
-- **Session browser.** Every Claude Code session on the machine, indexed with tantivy and searchable, grouped by project or date. Resume any session into a tab; preview, rename-by-drag, trash with undo, and fork lineage are all handled, including the session-id rewrites Claude does on resume and background mode.
-- **Dialogs over the TUI.** Claude's own `/model`, `/rewind`, permission prompts, and the "Switch model?" confirm are detected from the screen and presented as real dialogs — keyboard-first, closed-loop (every keystroke is verified against what the TUI actually drew), and honest about failure. The TUI underneath stays the source of truth.
-- **Composer pills.** Model, effort, tasks, artifacts, running agents, permission mode, git, and usage — read live from the session transcript and Claude's config, so they stay right no matter who changed them.
-- **Usage.** Plan limits (the same data as `/usage`) as compact bars, plus the session's context-window fill read from the transcript.
-- **Panels.** File explorer, git (branches, log, per-file diffs with inotify-driven refresh), and an agents view for background sessions. The Agent panel's tasks and artifacts read Claude Code, Grok, and Codex sessions — each engine's own on-disk shape.
-- **File tabs.** The center is a browser-style tab strip: the session's terminal in a locked tab, and files from the explorer (or the artifacts list) opening beside it in an in-app CodeMirror editor — syntax highlighting, search, Ctrl+S save with a conflict guard so an agent's concurrent write is never silently clobbered.
-- **Comforts.** Themes, font picker with system font install, per-panel layout persistence, window-state restore, attention bell when a session needs input.
+---
 
-## Running it
+## Why aiterm
+
+- **The truth lives on disk, not in a copy.** State is read from where the agent already keeps it — transcripts, config, the drawn screen — so the UI cannot drift from what the CLI is actually doing.
+- **Closed-loop, never guessing.** When aiterm drives a TUI (model picker, rewind, permission prompts), every keystroke is verified against what the TUI drew. It refuses rather than lies.
+- **Multi-engine by design.** One adapter contract ([HARNESS-CONTRACT.md](HARNESS-CONTRACT.md)) per engine; the sidebar, search index, fleet board and phone all work the same across all of them.
+- **Your phone is a real client, not a viewer.** Four transports, pinned TLS, no third party in the middle, off by default.
+
+## Engines
+
+| Engine | What you get |
+|---|---|
+| **Claude Code** | New session in any folder, resume, instant fork (no process needed), rename, trash with undo. `/model`, `/rewind`, permission prompts and "Switch model?" become real keyboard-first dialogs. Plan-limit usage bars and per-session context fill. |
+| **Codex** | List, resume, fork. Tasks and generated-image artifacts read from Codex's own files. Credits from the ChatGPT usage endpoint. |
+| **Grok** | Sessions with an aiterm-minted id (row appears on the first frame), resume from any folder, titles and model from Grok's own summary, image artifacts. |
+| **OpenCode** | Sessions read from OpenCode's SQLite store, launched from the same start menu, local providers resolved from `opencode.json`. |
+| **Antigravity** (`agy`) | Conversations with agy's own titles and transcripts; resume; usage bars. |
+| **API + local models** | Any OpenAI-compatible base URL — OpenRouter, OpenAI, Together, Groq, vLLM, llama.cpp. Add a key, test it, pick a shortlist, chat in a tab like any CLI. Keys live in a 0600 file and never touch argv. |
+
+An engine that isn't installed simply isn't offered.
+
+## Sessions
+
+- **Sidebar** — every session from every engine, grouped by project or date, full-text searchable. Star, rename, fork, preview, trash/restore.
+- **Hover card** — rest on a row: opening ask, last exchange, duration, model, mode, context used, tools, files.
+- **Home dashboard** — a prompt box with engine/model/effort (type, Enter, the session opens already working) and the **Fleet board**: every session ranked by how much it wants from you right now.
+- **File tabs** — browser-style strip; the terminal locked on the left, files from the explorer beside it in a CodeMirror editor with a save-conflict guard so an agent's concurrent write is never clobbered.
+- **Previews** — Markdown live from the buffer, HTML as the real page in a sandboxed iframe, PDFs page by page.
+- **Panels** — explorer, git (branches, log, per-file diffs on filesystem events), agent tasks and artifacts.
+- **Bring in a crew** — pull a second agent (any engine, API or local model) into a live session; choose how long it stays. Five relay prompts, all editable.
+- **Librarian** — a cheap model names the sessions the engine didn't; runs on an installed CLI's print mode (no extra spend) or an API provider. Hand-set names always win.
+- **Attention** — bell, desktop notifications in the session's own words, taskbar badge, tray alert menu.
+- **Changes ledger** — every file an agent created, modified or deleted, attributed to the session, persistent across restarts.
+
+## Phone
+
+Pair once by QR (single-use secret, 5-minute expiry, certificate fingerprint pinned before the phone sends anything, device approved on the desktop). One pairing covers every road.
+
+| Road | When it's used |
+|---|---|
+| **LAN** | same network |
+| **VPN** | Tailscale / WireGuard, MagicDNS names included |
+| **Relay** | blind SNI-routed relay when neither side is reachable |
+| **iroh** | peer-to-peer QUIC with relay fallback, no server of ours |
+
+Any set of roads on at once, tried in an order you can reorder from either end.
+
+On the phone: read any session as a conversation (markdown, tool cards, tappable file chips, live streaming), send input, interrupt, stop, rename, answer permission dialogs, bring in a second agent, start a new session in any desktop folder, browse and preview what the agent produced (images, video, text, PDF, live web preview), open a plain desktop shell, search and filter the fleet, usage strip, themes, biometric lock.
+
+The phone never receives PTY bytes for agent sessions, never reads a transcript, never owns a process. It asks the desktop.
+
+## Settings
+
+Appearance (8 themes, accent, icon size, time zone, per-panel scale) · Fonts (UI + terminal, GPU/DOM renderer, install from file) · Agents · Model access · Librarian · Bring in · Remote access · Diagnostics.
+
+## Install
+
+Grab a build from [Releases](https://github.com/jallisonfl/aiterm-upstream/releases):
+
+| Channel | Tag | What it is |
+|---|---|---|
+| **Stable** | `vX.Y.Z` | marked *latest*; cut from `main` |
+| **Beta** | `vX.Y.Z-beta.N` | release candidate, fixes only |
+| **Alpha** | `vX.Y.Z-alpha.N` | feature-complete snapshot from `5lime-dev` |
+| **Nightly** | `nightly-YYYYMMDD` | that day's `5lime-dev`, published every evening |
+
+Each release ships an AppImage, `.deb`, `.rpm`, and the phone APK. You'll want the CLIs you use installed and signed in; aiterm reads their state (`~/.claude/`, `~/.codex/`, `~/.grok/`, …) and drives the real thing.
+
+## Build from source
 
 ```bash
 npm install
-npm run tauri dev
+npm run tauri dev                              # desktop, hot reload
+npm run tauri build -- --bundles appimage,deb  # release build
 ```
 
-A release build (`npm run tauri build -- --bundles rpm`) produces an installable RPM under `src-tauri/target/release/bundle/rpm/`.
+```bash
+cd mobile && ./gradlew assembleDebug           # phone APK → app/build/outputs/apk/debug/
+```
 
-You'll want the `claude` CLI installed and signed in; aiterm reads its state from `~/.claude/` and drives the real thing.
+Prerequisites: Rust toolchain, Node 22+, Tauri 2 Linux deps (`libwebkit2gtk-4.1-dev`, `libappindicator3-dev`, `librsvg2-dev`, `patchelf`), JDK 21 + Android SDK for the phone app, `sqlite3` binary for OpenCode sessions. Re-run `npm install` after pulling a commit that adds packages.
+
+Large workspaces can exhaust `fs.inotify.max_user_watches`; if diffs or transcripts stop refreshing, raise it (`/etc/sysctl.d/60-inotify-aiterm.conf`: `fs.inotify.max_user_watches=524288`, `fs.inotify.max_user_instances=1024`).
+
+## Branches and versions
+
+```
+main          stable — every commit is releasable, tagged vX.Y.Z
+5lime-dev     daily development — nightlies and alphas are cut from here
+feat/<slug>   one feature each, merged into 5lime-dev with --no-ff
+release/X.Y   only while a beta is being stabilised
+```
+
+Releases are tags, never branches. `scripts/nightly.sh` freezes today's `5lime-dev` as `nightly-YYYYMMDD`; `scripts/release.sh alpha|beta|final X.Y.Z` bumps the version and tags. CI builds and publishes from the tag. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Design notes
 
-The session/fork model — what owns a session's lifetime, how resume and background mode move ids, why tabs own processes — is written up in [SESSION-MODEL.md](SESSION-MODEL.md).
+The session/fork model — who owns a session's lifetime, how resume and background mode move ids, why tabs own processes — is in [SESSION-MODEL.md](SESSION-MODEL.md). The engine adapter contract is [HARNESS-CONTRACT.md](HARNESS-CONTRACT.md). The remote transport model is [docs/remote-roads.md](docs/remote-roads.md).
 
-The recurring principle: read state from where Claude already keeps it (transcripts, config files, the drawn screen) rather than tracking a copy, so the UI can't drift from the truth. Where aiterm drives the TUI, it does so closed-loop and refuses to guess.
+Brand marks come from the LobeHub icon set (MIT), vendored under `src/assets/icons`; refresh with `node scripts/sync-icons.mjs`.
 
-## Brand icons
+## License
 
-Every engine, model vendor and API host aiterm names draws its real mark, from the LobeHub set ([lobehub.com/icons](https://lobehub.com/icons), MIT). The SVGs are vendored under `src/assets/icons` — mono (`currentColor`, so it follows the theme) and colour where the brand has one — with `brands.json` (title, primary colour, which variants exist) and `models.json` (LobeHub's model-id → brand rules) beside them. `src/brandMap.ts` resolves an agent id, a model id, a provider name or a base URL to a brand; `src/brand.ts` loads the SVG (the engines eagerly, everything else on demand); `BrandIcon` draws it.
-
-To pick up a newer set, bump `@lobehub/icons-static-svg` in `package.json`, set `ICONS_VERSION` in `scripts/sync-icons.mjs` to the matching `@lobehub/icons` release, and run:
-
-```bash
-node scripts/sync-icons.mjs        # svg + brands.json + models.json
-node scripts/sync-icons.mjs --png  # also the light/dark PNG sets, if something needs them
-```
-
-## Development workflow
-
-These instructions are for me, 5lime (jallisonfl), and the agents working in my copy — not a contributor guide for this repo. They describe how my changes reach it.
-
-Two branches in my own copy, and a pull request upstream whenever the second one moves.
-
-- **`5lime`** is dev. All work happens here.
-- **`main`** is prod-ready. When a version is ready, `5lime` is merged into `main`, and every update of `main` goes to the original repo as a pull request.
-
-The repos, with the remote names in this checkout (`git remote -v`):
-
-- **`Adroited-LLC/aiterm`** — remote `origin`. The canonical repo, Matt's. Read-only for me; it takes pull requests and squash-merges them.
-- **`jallisonfl/aiterm`** — remote `fork`. My own copy, private, holding `5lime` and `main`. It is *not* a GitHub fork of the canonical repo (an independent repo that shares history), and GitHub only accepts cross-repo pull requests from real forks — so no PR can be opened from here, which is why the next one exists.
-- **`jallisonfl/aiterm-upstream`** — remote `upstream-fork`. A real fork of the canonical repo, public because a fork of a public repo cannot be private. It carries a mirror of `main` for the sole purpose of opening pull requests from it. Nothing is developed there.
-
-The cycle:
-
-1. **Sync from upstream before starting.** If `origin/main` has moved, merge it into `5lime`. Upstream squash-merges, so `5lime` keeps its own history and this merge is routine:
-
-   ```bash
-   git fetch origin
-   git rev-list --count 5lime..origin/main   # non-zero → needs merging
-   git merge origin/main                    # on 5lime
-   ```
-
-2. **Work on `5lime`** and push it to my copy when I say so:
-
-   ```bash
-   git push fork 5lime
-   ```
-
-3. **Publish a version** — merge dev into prod, push prod to my copy and to the PR fork:
-
-   ```bash
-   git checkout main && git merge 5lime
-   git push fork main
-   git push upstream-fork main
-   ```
-
-4. **Open the pull request** from `jallisonfl:main` (the fork `aiterm-upstream`) into `Adroited-LLC:main`. Through the API, that is `POST /repos/Adroited-LLC/aiterm/pulls` with `head: jallisonfl:main`, `head_repo: jallisonfl/aiterm-upstream`, `base: main` — and it needs `GITHUB_CLASSIC_TOKEN`; the fine-scoped `GITHUB_TOKEN` is refused for a repo I do not own. Both live in `~/AI-OS/.env`. Check the build first: `(cd src-tauri && cargo test --lib) && npx tsc --noEmit`.
-
-After pulling a commit that adds npm packages, run `npm install` in the checkout — otherwise `npm run tauri dev` comes up with a Vite "Failed to resolve import" overlay instead of the app.
+Source-available, not open source. Free to build, run and modify for your own use, at home or at work; it may not be sold, offered as a service, or redistributed. See [LICENSE](LICENSE).
