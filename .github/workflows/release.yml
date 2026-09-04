@@ -55,6 +55,8 @@ jobs:
       - run: npm ci
       - name: Build desktop (AppImage + deb + rpm)
         run: npm run tauri build -- --bundles appimage,deb,rpm
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
       - name: Build phone APK (mobile/)
         continue-on-error: true
         run: cd mobile && chmod +x gradlew && ./gradlew --no-daemon assembleDebug && cp app/build/outputs/apk/debug/app-debug.apk "../aiterm-phone-${GITHUB_REF_NAME}.apk"
