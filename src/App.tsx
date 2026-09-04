@@ -2391,7 +2391,7 @@ export default function App() {
       seen.add(s.id);
       const ov = overview.get(s.id);
       items.push({
-        id: `need:${s.id}`, group: "Needs you", rank: 0,
+        id: `need:${s.id}`, group: "Needs you", rank: 0, agent: s.agent,
         title: s.title, subtitle: ov?.detail || homeAbbrev(s.project_path), keywords: s.agent,
         run: () => selectSession(s),
       });
@@ -2405,14 +2405,14 @@ export default function App() {
     for (const t of tabs.filter((t) => t.parentKey === undefined)) {
       items.push({
         id: `tab:${t.key}`, group: "Open tabs", rank: 1, title: t.title, subtitle: t.cwd ? homeAbbrev(t.cwd) : undefined,
-        keywords: t.agentId ?? "", run: () => { setPreviewSession(null); setActiveFileTab(null); setActiveTab(t.key); },
+        agent: t.agentId, keywords: t.agentId ?? "", run: () => { setPreviewSession(null); setActiveFileTab(null); setActiveTab(t.key); },
       });
     }
     const recent = [...sessions].sort((a, b) => b.last_active - a.last_active).slice(0, 200);
     for (const s of recent) {
       if (seen.has(s.id)) continue;
       items.push({
-        id: `s:${s.id}`, group: "Sessions", rank: 2, title: s.title,
+        id: `s:${s.id}`, group: "Sessions", rank: 2, title: s.title, agent: s.agent,
         subtitle: homeAbbrev(s.project_path) + (s.branch ? `  ${s.branch}` : ""), keywords: s.agent,
         run: () => selectSession(s),
       });
@@ -2420,7 +2420,7 @@ export default function App() {
     const where = homeCwd ? homeAbbrev(homeCwd) : "";
     for (const a of emptyCtl.agents) {
       items.push({
-        id: `new:${a.id}`, group: "Actions", rank: 3, title: `New ${a.display_name} session`, subtitle: where, keywords: "start launch",
+        id: `new:${a.id}`, group: "Actions", rank: 3, title: `New ${a.display_name} session`, subtitle: where, keywords: "start launch", agent: a.id,
         run: () => { if (homeCwd) void newSession(homeCwd, { kind: "agent", agentId: a.id, model: null, effort: null }); },
       });
     }

@@ -29,6 +29,9 @@ export interface PaletteItem {
   /** Extra text a query may match against — a path, an engine name — that
    *  is not worth drawing in the row. */
   keywords?: string;
+  /** Engine id, when the row is a session or a tab: drawn as its brand mark
+   *  so the eye can tell a Claude row from a Codex row before reading it. */
+  agent?: string;
   /** Section order: lower first. Items keep their given order within it. */
   rank?: number;
   run: () => void;

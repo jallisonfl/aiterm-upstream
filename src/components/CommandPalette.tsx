@@ -13,6 +13,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { rankItems, type PaletteItem } from "../palette";
 import Icon from "./Icon";
+import AgentIcon from "./AgentIcon";
+import { agentTint } from "../brand";
 import { Search } from "lucide-react";
 
 interface Props {
@@ -100,6 +102,11 @@ export default function CommandPalette({ items, onClose, placeholder }: Props) {
                   onMouseEnter={() => setCursor(i)}
                   onClick={() => run(i)}
                 >
+                  {r.item.agent && (
+                    <span className={"agent-badge palette-badge" + agentTint(r.item.agent).className} style={agentTint(r.item.agent).style}>
+                      <AgentIcon agent={r.item.agent} size={13} />
+                    </span>
+                  )}
                   <span className="palette-title"><Highlight text={r.item.title} hits={r.hits} /></span>
                   {r.item.subtitle && <span className="palette-sub">{r.item.subtitle}</span>}
                 </button>

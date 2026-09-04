@@ -4299,7 +4299,7 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--text-faint); padding: 8px 8px 3px;
 }
 .palette-row {
-  display: flex; align-items: baseline; gap: 10px;
+  display: flex; align-items: center; gap: 10px;
   width: 100%; text-align: left;
   background: none; border: none; color: var(--text);
   padding: 6px 8px; border-radius: 6px; cursor: pointer;
@@ -4313,3 +4313,4 @@ input[type="range"]::-webkit-slider-thumb {
   font-size: 11px; color: var(--text-dim);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.palette-badge { flex: none; width: 20px; height: 20px; }
