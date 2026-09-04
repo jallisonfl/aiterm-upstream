@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "aiterm",
-  "version": "0.10.74",
+  "version": "0.11.0",
   "identifier": "com.adroited.aiterm",
   "build": {
     "beforeDevCommand": "npm run dev",
