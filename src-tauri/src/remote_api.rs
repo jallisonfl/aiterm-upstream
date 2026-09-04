@@ -68,7 +68,7 @@ pub struct Config {
     /// but a person who wants LAN/VPN only can turn just this off.
     #[serde(default = "default_true")]
     pub iroh_enabled: bool,
-    /// The direct roads (`docs/remote-roads.md`): private addresses on the
+    /// The direct roads (`docs/remote/remote-roads.md`): private addresses on the
     /// same network, and tunnel addresses (Tailscale, WireGuard…). Each
     /// decides whether its addresses go in the QR and in `/v1/status`.
     #[serde(default = "default_true")]
@@ -630,7 +630,7 @@ pub struct RemoteStatus {
     pub iroh_enabled: bool,
     /// The reach-from-anywhere address: this desktop's iroh node id.
     pub iroh_node: Option<String>,
-    /// Which roads are on. See `docs/remote-roads.md`.
+    /// Which roads are on. See `docs/remote/remote-roads.md`.
     pub roads: Roads,
     /// What the VPN road sees on this machine right now.
     pub vpn: VpnStatus,
@@ -2798,7 +2798,7 @@ struct SpineQuery {
 
 /// The spine's replay: everything after `after` for one session. Asking
 /// registers interest, which is what starts (or keeps) the adapter tail —
-/// see `docs/spine.md`. `live` false means the session is served by the
+/// see `docs/architecture/spine.md`. `live` false means the session is served by the
 /// legacy adapter and the events are re-derived, not read from the engine.
 async fn spine(State(ctx): State<Ctx>, Path(id): Path<String>, Query(q): Query<SpineQuery>) -> Response {
     match crate::spine::read_after(&ctx.app, &id, q.after.unwrap_or(0)).await {

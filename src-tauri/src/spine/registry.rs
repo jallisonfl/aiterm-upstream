@@ -1,7 +1,7 @@
 //! The spine's registry: one bounded event log per session, the adapter
 //! driver that fills it, and the broadcast every consumer reads.
 //!
-//! Lives in Tauri managed state as `Arc<Spine>`. See `docs/spine.md` for the
+//! Lives in Tauri managed state as `Arc<Spine>`. See `docs/architecture/spine.md` for the
 //! lifecycle this implements.
 
 use std::collections::{HashMap, HashSet, VecDeque};

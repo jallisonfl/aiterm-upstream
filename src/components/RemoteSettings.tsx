@@ -90,7 +90,7 @@ function saveListenerPreference(config: ListenerConfig) {
  * At the top: one sentence saying which roads are live, and one "Pair phone"
  * button. Then the roads themselves — LAN, VPN, AITerm Relay, iroh — each a
  * card with a switch, a dot, and its own settings behind a disclosure. Any
- * set of roads can be on at once (docs/remote-roads.md). Under "Listeners",
+ * set of roads can be on at once (docs/remote/remote-roads.md). Under "Listeners",
  * collapsed, the two sockets that actually answer: the gateway (the AITerm
  * phone app, per-device trust) and the phone listener (the phone listener, token
  * trust). Either, or both, can be on.

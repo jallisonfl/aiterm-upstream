@@ -1,6 +1,6 @@
 //! Roads for the phone listener — the pieces of `remote_api` that decide
 //! *which* addresses a phone is told about and *what* a VPN looks like
-//! from here. See `docs/remote-roads.md`.
+//! from here. See `docs/remote/remote-roads.md`.
 //!
 //! A road is one way a phone reaches this desktop: `lan` (a private address
 //! on the same network), `vpn` (Tailscale, WireGuard, anything that leaves

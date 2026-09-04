@@ -1,7 +1,7 @@
 //! Legacy adapter: any engine without a native feed yet. Re-derives the
 //! conversation from `detail::conversation_rich` and diffs it into events.
 //!
-//! Owned by the spine-core task. See `docs/spine.md`.
+//! Owned by the spine-core task. See `docs/architecture/spine.md`.
 //!
 //! `conversation_rich` hands back `(role, text)` turns where the role is
 //! "user", "assistant", "thinking", or — for a tool call — the tool's own

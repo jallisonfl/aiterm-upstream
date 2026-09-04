@@ -1,7 +1,7 @@
 /**
  * The Remote access panel's road decisions, kept out of the component.
  *
- * A road is one way a phone reaches this desktop (see docs/remote-roads.md).
+ * A road is one way a phone reaches this desktop (see docs/remote/remote-roads.md).
  * Each card on the panel shows a dot and a sentence; both are decided here
  * from the two listeners' status objects, so the component only draws.
  */

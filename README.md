@@ -16,7 +16,7 @@ Linux-first (Fedora and Ubuntu daily). Tauri 2 + Rust, React, xterm.js. Not a re
 
 - **The truth lives on disk, not in a copy.** State is read from where the agent already keeps it — transcripts, config, the drawn screen — so the UI cannot drift from what the CLI is actually doing.
 - **Closed-loop, never guessing.** When aiterm drives a TUI (model picker, rewind, permission prompts), every keystroke is verified against what the TUI drew. It refuses rather than lies.
-- **Multi-engine by design.** One adapter contract ([HARNESS-CONTRACT.md](HARNESS-CONTRACT.md)) per engine; the sidebar, search index, fleet board and phone all work the same across all of them.
+- **Multi-engine by design.** One adapter contract ([HARNESS-CONTRACT.md](docs/architecture/HARNESS-CONTRACT.md)) per engine; the sidebar, search index, fleet board and phone all work the same across all of them.
 - **Your phone is a real client, not a viewer.** Four transports, pinned TLS, no third party in the middle, off by default.
 
 ## Engines
@@ -108,7 +108,7 @@ Releases are tags, never branches. `scripts/nightly.sh` freezes today's `5lime-d
 
 ## Design notes
 
-The session/fork model — who owns a session's lifetime, how resume and background mode move ids, why tabs own processes — is in [SESSION-MODEL.md](SESSION-MODEL.md). The engine adapter contract is [HARNESS-CONTRACT.md](HARNESS-CONTRACT.md). The remote transport model is [docs/remote-roads.md](docs/remote-roads.md).
+The session/fork model — who owns a session's lifetime, how resume and background mode move ids, why tabs own processes — is in [SESSION-MODEL.md](docs/architecture/SESSION-MODEL.md). The engine adapter contract is [HARNESS-CONTRACT.md](docs/architecture/HARNESS-CONTRACT.md). The remote transport model is [docs/remote/remote-roads.md](docs/remote/remote-roads.md).
 
 Brand marks come from the LobeHub icon set (MIT), vendored under `src/assets/icons`; refresh with `node scripts/sync-icons.mjs`.
 

@@ -37,4 +37,4 @@ The `release` workflow builds AppImage/deb/rpm + the phone APK and publishes the
 
 ## Adding an engine
 
-Implement the adapter contract in [HARNESS-CONTRACT.md](HARNESS-CONTRACT.md): parsers are pure functions with verbatim on-disk fixtures, stamped with the CLI version they were written against.
+Implement the adapter contract in [HARNESS-CONTRACT.md](docs/architecture/HARNESS-CONTRACT.md): parsers are pure functions with verbatim on-disk fixtures, stamped with the CLI version they were written against.
