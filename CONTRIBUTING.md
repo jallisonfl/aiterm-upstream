@@ -2,25 +2,29 @@
 
 aiterm is a one-person project with an open door. Read [LICENSE](LICENSE) first: you may build, run and modify it for your own use; you may not redistribute it. Pull requests are welcome under those terms.
 
-## Branches
+## How work lands
 
-| Branch | Purpose |
-|---|---|
-| `main` | stable; every commit is releasable |
-| `5lime-dev` | integration; daily work lands here |
-| `feat/<slug>` | one feature or fix each; opened from `5lime-dev`, merged back with `--no-ff` |
-| `release/X.Y` | created only when a beta needs fixes before `main` |
-
-## Working on something
+Commit straight onto `5lime-dev`, one commit per feature or fix, and push. CI builds every push. That is the whole workflow for day-to-day work; there is no branch per feature.
 
 ```bash
 git checkout 5lime-dev && git pull
-git checkout -b feat/pdf-thumbnails
-# small commits, each message says what the user gets, not what the code does
-git push -u origin feat/pdf-thumbnails      # CI builds it
+# build the thing
+git commit -am "A PDF opens like any other file"    # what the user gets, not what the code does
+git push
 ```
 
-Open a PR into `5lime-dev`. CI runs `tsc`, the UI tests, and `cargo test --lib -- --test-threads=1` (some tests set `HOME`; they must run serially).
+A branch exists for exactly two reasons:
+
+- **A multi-day change** you want kept out of tonight's nightly: `git checkout -b <slug>`, merge back with `--no-ff` when it's done, delete the branch.
+- **An outside contribution**: fork, branch, open a PR into `5lime-dev`. Merged PR branches delete themselves.
+
+| Branch | Purpose |
+|---|---|
+| `5lime-dev` | where everything happens |
+| `main` | stable; moves only when `scripts/release.sh final` cuts a version |
+| `release/X.Y` | created only when a beta needs fixes before `main` |
+
+CI runs `tsc`, the UI tests, and `cargo test --lib -- --test-threads=1` on every push (some tests set `HOME`; they must run serially).
 
 Commit messages: one sentence in plain language, present tense, from the user's side. "A PDF opens like any other file" beats "add PdfView component".
 

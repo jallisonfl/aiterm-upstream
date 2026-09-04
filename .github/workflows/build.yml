@@ -5,7 +5,7 @@ name: build
 
 on:
   push:
-    branches: [5lime-dev, main, 'feat/**', 'release/**']
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 

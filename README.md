@@ -99,9 +99,8 @@ Large workspaces can exhaust `fs.inotify.max_user_watches`; if diffs or transcri
 ## Branches and versions
 
 ```
-main          stable — every commit is releasable, tagged vX.Y.Z
-5lime-dev     daily development — nightlies and alphas are cut from here
-feat/<slug>   one feature each, merged into 5lime-dev with --no-ff
+5lime-dev     where everything happens — one commit per feature, pushed as you go
+main          stable — moves only when a version is cut, tagged vX.Y.Z
 release/X.Y   only while a beta is being stabilised
 ```
 
