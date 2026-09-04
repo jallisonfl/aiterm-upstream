@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
-aiterm-relay-protocol = { path = "../relay-protocol" }
+aiterm-relay-protocol = { path = "../protocol" }
 axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
 base64 = "0.22"
