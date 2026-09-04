@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose owns the real styling; this only avoids an action-bar flash. -->
+    <style name="Theme.Aiterm" parent="android:Theme.Material.NoActionBar" />
+</resources>

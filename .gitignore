@@ -63,3 +63,11 @@ mobile/local.properties
 
 # Local harness audit notes — never published.
 harness-audit/
+
+# Gateway Android client build output (relay/gateway-android). Gradle wrapper is
+# committed on purpose so a clone builds without a local Gradle install.
+relay/gateway-android/build/
+relay/gateway-android/app/build/
+relay/gateway-android/quic-bridge/target/
+relay/gateway-android/.gradle/
+relay/gateway-android/local.properties
