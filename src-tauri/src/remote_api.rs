@@ -2757,7 +2757,7 @@ async fn terminal_input(
         return err(StatusCode::CONFLICT, e);
     }
     if body.enter.unwrap_or(true) {
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        tokio::time::sleep(Duration::from_millis(PASTE_SETTLE_MS)).await;
         if let Err(e) = tabs.write_tab_str(&id, "\r") {
             return err(StatusCode::INTERNAL_SERVER_ERROR, e);
         }
@@ -2906,6 +2906,10 @@ struct InputBody {
     enter: Option<bool>,
 }
 
+/// How long after a pasted prompt the Enter follows. Past Codex's 120 ms
+/// paste-burst window with room for the PTY write to land.
+const PASTE_SETTLE_MS: u64 = 250;
+
 async fn input(State(ctx): State<Ctx>, Path(id): Path<String>, Json(body): Json<InputBody>) -> Response {
     crate::diag::write("remote", &format!("input {} ({} chars, enter={})", &id[..id.len().min(8)], body.text.len(), body.enter.unwrap_or(true)));
     let tabs = ctx.app.state::<std::sync::Arc<crate::tabs::TabRegistry>>();
@@ -2917,8 +2921,11 @@ async fn input(State(ctx): State<Ctx>, Path(id): Path<String>, Json(body): Json<
     }
     if body.enter.unwrap_or(true) {
         // A TUI that just took a paste needs a beat before the Enter, or it
-        // reads the two as one and the line sits unsent.
-        tokio::time::sleep(Duration::from_millis(60)).await;
+        // reads the two as one and the line sits unsent. Codex's paste-burst
+        // detector holds Enter in newline mode for 120 ms after the burst
+        // (codex-rs/tui bottom_pane/paste_burst.rs); 60 ms landed inside it
+        // and a long prompt gained a blank line instead of being sent.
+        tokio::time::sleep(Duration::from_millis(PASTE_SETTLE_MS)).await;
         if let Err(e) = tabs.write_session_str(&id, "\r") {
             return err(StatusCode::INTERNAL_SERVER_ERROR, e);
         }
