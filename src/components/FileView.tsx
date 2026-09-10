@@ -82,6 +82,9 @@ export default function FileView({
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // A newly mounted file can inherit a nonzero refresh tick. Its initial
+  // read must finish before a refresh is allowed to replace the buffer.
+  const loadedRef = useRef(false);
   /** mtime the buffer content was loaded or last saved at — the save's
    *  compare-and-swap token. */
   const mtimeRef = useRef<number>(0);
@@ -227,7 +230,7 @@ export default function FileView({
         mtimeRef.current = f.mtime_ms;
         setTruncated(f.truncated);
         settingRef.current = true;
-        view.dispatch({ changes: { from: 0, insert: f.content } });
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: f.content } });
         settingRef.current = false;
         if (modeRef.current === "preview") renderPreview();
         if (f.truncated) {
@@ -239,6 +242,7 @@ export default function FileView({
             ]),
           });
         }
+        loadedRef.current = true;
       } catch (e) {
         setErr(String(e));
       }
@@ -262,7 +266,7 @@ export default function FileView({
   // buffer follows the disk; a dirty one only raises the conflict flag when
   // this file is what moved.
   useEffect(() => {
-    if (!refreshKey || !viewRef.current) return;
+    if (!refreshKey || !viewRef.current || !loadedRef.current) return;
     (async () => {
       try {
         const f = await readTextFile(path);
