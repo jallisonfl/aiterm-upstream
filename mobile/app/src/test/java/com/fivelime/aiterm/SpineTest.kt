@@ -233,4 +233,31 @@ class SpineTest {
         // A page that adds nothing reports no advance, so a catch-up loop stops.
         assertFalse(store.replay(SpineResponse(7, true, emptyList(), hasMore = true, oldestSeq = 10, latestSeq = 11)))
     }
+
+    @Test fun `a subagent envelope is recognised whole and a quote of one is not`() {
+        val env = "/root/planner → /root\nMessage Type: FINAL_ANSWER\nTask name: /root\nSender: /root/planner\nPayload:\nAll done."
+        val m = parseSubagentMessage(env)
+        assertEquals("planner · Completed", m?.headline); assertEquals("All done.", m?.payload)
+        assertNull(parseSubagentMessage("The agent said:\n" + env))
+        assertNull(parseSubagentMessage("/root/a → /root\nMessage Type: MESSAGE\nTask name: /root\nSender: /root/b\nPayload:\nx"))
+        assertEquals("worker · Task", parseSubagentMessage("/root → /root/worker\nMessage Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:")?.headline)
+    }
+
+    @Test fun `tool calls and subagent updates fold into one activity row per run`() {
+        val store = ConversationStore()
+        val sub = """"kind":"agent_text","id":"s1","text":"/root/planner → /root\nMessage Type: MESSAGE\nTask name: /root\nSender: /root/planner\nPayload:\nhalf","done":true}"""
+        store.replay(listOf(
+            ev(1, user1),
+            ev(2, """"kind":"tool_call","id":"t1","tool":"Read","title":"Read","category":"read","input":"a.txt","status":"running"}"""),
+            ev(3, sub),
+            ev(4, """"kind":"tool_call","id":"t2","tool":"Bash","title":"Bash","category":"execute","input":"ls","status":"completed"}"""),
+            ev(5, text1Full),
+        ))
+        val rows = timeline(store.items)
+        assertEquals(3, rows.size)
+        assertTrue(rows[0] is TimelineItem.Row)
+        val act = rows[1] as TimelineItem.Activity
+        assertEquals(3, act.items.size); assertEquals(1, act.running); assertEquals("activity:t1", act.key)
+        assertTrue(rows[2] is TimelineItem.Row)
+    }
 }

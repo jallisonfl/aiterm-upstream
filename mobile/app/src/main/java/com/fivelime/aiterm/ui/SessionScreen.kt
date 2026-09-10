@@ -29,6 +29,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
 import com.fivelime.aiterm.FileEntry
+import androidx.compose.runtime.key
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.fivelime.aiterm.parseSubagentMessage
+import com.fivelime.aiterm.SubagentMessage
+import com.fivelime.aiterm.timeline
+import com.fivelime.aiterm.TimelineItem
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -39,6 +45,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
@@ -162,6 +169,10 @@ fun SessionScreen(vm: AppViewModel, s: Session, outer: PaddingValues) {
         RenameDialog(current = s.title, onDone = { vm.rename(s, it); renaming = false }, onDismiss = { renaming = false })
     }
     val list = rememberLazyListState()
+
+    // Tool calls and subagent updates fold into one Activity row each run.
+
+    val rows = remember(vm.items) { timeline(vm.items) }
 
     val made = vm.files.filter { it.via == "made" || it.via == "edited" || it.via == "wrote" }
 
@@ -415,7 +426,12 @@ fun SessionScreen(vm: AppViewModel, s: Session, outer: PaddingValues) {
                     // Keyed by the spine's own ids: a block that grows
                     // updates one row in place, it does not re-key the list
                     // under the scroll position.
-                    items(vm.items, key = { it.key }) { item -> ItemView(item, onOpenPath = vm::openMentioned, onHold = { heldItem = it }) }
+                    items(rows, key = { it.key }) { row ->
+                        when (row) {
+                            is TimelineItem.Row -> ItemView(row.item, onOpenPath = vm::openMentioned, onHold = { heldItem = it })
+                            is TimelineItem.Activity -> ActivityGroup(row, onOpenPath = vm::openMentioned, onHold = { heldItem = it })
+                        }
+                    }
                     // What the session made, right where the conversation ends —
                     // the transcript often never prints a path (tool output is
                     // dropped at phone size), but the desktop's ledger knows.
@@ -626,6 +642,8 @@ private fun UserBubble(item: Item.User, onHold: () -> Unit) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AgentBlock(item: Item.AgentText, onOpenPath: (String) -> Unit, onHold: () -> Unit) {
+    val sub = remember(item.text) { parseSubagentMessage(item.text) }
+    if (sub != null) { SubagentCard(item.id, sub, onHold); return }
     Column(Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = onHold).padding(end = 12.dp)) {
         MarkdownText(item.text)
         if (!item.done) Caret()
@@ -635,6 +653,63 @@ private fun AgentBlock(item: Item.AgentText, onOpenPath: (String) -> Unit, onHol
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             paths.forEach { p -> FileChip(p.substringAfterLast('/'), onClick = { onOpenPath(p) }) }
+        }
+    }
+}
+
+/** A subagent's update: who and what, the payload behind a tap. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SubagentCard(id: String, m: SubagentMessage, onHold: () -> Unit) {
+    var expanded by rememberSaveable(id) { mutableStateOf(false) }
+    val hasBody = m.payload.isNotBlank()
+    Column(
+        Modifier.fillMaxWidth().background(Surface1.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+            .combinedClickable(onClick = { if (hasBody) expanded = !expanded }, onLongClick = onHold)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Psychology, null, tint = Accent, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(m.headline, style = MaterialTheme.typography.labelMedium, color = Accent, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (hasBody) Icon(if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, null, tint = Muted, modifier = Modifier.size(16.dp))
+        }
+        if (expanded && hasBody) Box(Modifier.padding(top = 6.dp)) { MarkdownText(m.payload, color = Muted) }
+    }
+}
+
+/** A run of tool calls and subagent updates, folded to one line: how many
+ *  steps, how many still running. Open, each member draws as itself. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ActivityGroup(group: TimelineItem.Activity, onOpenPath: (String) -> Unit, onHold: (Item) -> Unit) {
+    var expanded by rememberSaveable(group.key) { mutableStateOf(false) }
+    val n = group.items.size
+    val running = group.running
+    Column(
+        Modifier.fillMaxWidth().background(Surface1.copy(alpha = 0.42f), RoundedCornerShape(10.dp))
+            .combinedClickable(onClick = { expanded = !expanded }, onLongClick = { onHold(group.items.first()) })
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Build, null, tint = Accent, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "Activity · $n " + if (n == 1) "step" else "steps",
+                style = MaterialTheme.typography.labelMedium, color = Accent, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+            )
+            if (running > 0) {
+                PulsingDot(Amber)
+                Spacer(Modifier.width(4.dp))
+                Text("$running running", style = MaterialTheme.typography.labelSmall, color = Muted)
+                Spacer(Modifier.width(6.dp))
+            }
+            Icon(if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, null, tint = Muted, modifier = Modifier.size(16.dp))
+        }
+        if (expanded) Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            group.items.forEach { item -> key(item.key) { ItemView(item, onOpenPath = onOpenPath, onHold = onHold) } }
         }
     }
 }
