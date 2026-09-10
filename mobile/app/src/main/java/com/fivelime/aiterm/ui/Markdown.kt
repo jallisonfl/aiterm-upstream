@@ -355,7 +355,7 @@ private val INLINE = Regex(
         "|(\\*[^*\\s][^*]*\\*)" +
         "|((?<![\\w])_[^_\\s][^_]*_(?![\\w]))" +
         "|(~~[^~]+~~)" +
-        "|(\\[[^\\]]+]\\([^)\\s]+\\))" +
+        "|(\\[[^\\]]+]\\((?:<[^>\\r\\n]+>|[^)\\s]+)\\))" +
         "|(https?://[^\\s<>\"]+)",
 )
 
@@ -385,7 +385,10 @@ private fun inline(raw: String): AnnotatedString = buildAnnotatedString {
             t.startsWith("~~") -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { append(t.removeSurrounding("~~")) }
             t.startsWith("[") -> {
                 val label = t.substringAfter('[').substringBefore(']')
-                val url = t.substringAfter('(').substringBeforeLast(')')
+                // The target starts after `](`, not at the first `(` — a
+                // label may hold one — and may sit in angle brackets when it
+                // has spaces in it.
+                val url = t.substringAfter("](").dropLast(1).removeSurrounding("<", ">")
                 withLink(
                     LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = Accent, textDecoration = TextDecoration.Underline))),
                 ) { append(label) }

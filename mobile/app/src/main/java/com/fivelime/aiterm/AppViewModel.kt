@@ -171,13 +171,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var terminalLines by mutableStateOf<List<String>>(emptyList()); private set
     var terminalOpening by mutableStateOf(false); private set
 
-    fun openTerminal() {
+    /** A shell on the desktop — in `cwd` when a session asks for one, so a
+     *  terminal opened from a conversation starts in that session's folder. */
+    fun openTerminal(cwd: String? = null) {
         val a = api ?: return
         if (terminalOpening) return
         viewModelScope.launch {
             terminalOpening = true
             try {
-                val t = a.terminalOpen(cols = 60, rows = 24)
+                val t = a.terminalOpen(cols = 60, rows = 24, cwd = cwd?.takeIf { it.isNotBlank() })
                 terminalTitle = t.title
                 terminalLines = emptyList()
                 terminalTab = t.tab_id

@@ -248,8 +248,8 @@ class Api(val baseUrl: String, private val token: String, fingerprint: String, c
         val body = json.encodeToString(InputBody.serializer(), InputBody(keys, enter = false))
         call(req("/v1/sessions/$id/input").post(jsonBody(body)))
     }
-    suspend fun terminalOpen(cols: Int, rows: Int): TerminalOpened {
-        val body = json.encodeToString(TerminalOpenBody.serializer(), TerminalOpenBody(cols = cols, rows = rows))
+    suspend fun terminalOpen(cols: Int, rows: Int, cwd: String? = null): TerminalOpened {
+        val body = json.encodeToString(TerminalOpenBody.serializer(), TerminalOpenBody(cwd = cwd, cols = cols, rows = rows))
         return json.decodeFromString(call(req("/v1/terminal").post(jsonBody(body))))
     }
     suspend fun terminalScreen(tab: String): TerminalScreenData =

@@ -29,6 +29,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
 import com.fivelime.aiterm.FileEntry
+import com.fivelime.aiterm.isWebLink
+import com.fivelime.aiterm.conversationFilePath
+import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.fivelime.aiterm.parseSubagentMessage
@@ -302,6 +307,11 @@ fun SessionScreen(vm: AppViewModel, s: Session, outer: PaddingValues) {
                             onClick = { menu = false; vm.toggleStar(s) },
                         )
                         DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; renaming = true })
+                        DropdownMenuItem(
+                            text = { Text("Open a terminal here") },
+                            onClick = { menu = false; vm.openTerminal(cwd = s.group_path) },
+                            enabled = vm.connected && !vm.terminalOpening,
+                        )
                         if (open) DropdownMenuItem(text = { Text("Interrupt (Esc)") }, onClick = { menu = false; vm.interrupt(s) })
                         if (running || open) DropdownMenuItem(text = { Text("Stop session") }, onClick = { menu = false; vm.stop(s) })
                         DropdownMenuItem(text = { Text("Refresh") }, onClick = { menu = false; vm.select(s) })
@@ -391,6 +401,23 @@ fun SessionScreen(vm: AppViewModel, s: Session, outer: PaddingValues) {
                 }
             }
             Box(Modifier.fillMaxSize().padding(padding)) {
+                // A link in the conversation that names a desktop file opens
+                // here, drawn by this app; a web link goes to the browser;
+                // anything else is refused rather than handed to the system.
+                val parentUri = LocalUriHandler.current
+                val linkHandler = remember(parentUri) {
+                    object : UriHandler {
+                        override fun openUri(uri: String) {
+                            val path = conversationFilePath(uri)
+                            when {
+                                path != null -> vm.openMentioned(path)
+                                isWebLink(uri) -> runCatching { parentUri.openUri(uri) }.onFailure { vm.notice = "Could not open this link." }
+                                else -> vm.notice = "This link is not a desktop file or a web address."
+                            }
+                        }
+                    }
+                }
+                CompositionLocalProvider(LocalUriHandler provides linkHandler) {
                 LazyColumn(
                     state = list,
                     modifier = Modifier.fillMaxSize().graphicsLayer { alpha = if (landed) 1f else 0f }.drawWithContent {
@@ -437,6 +464,7 @@ fun SessionScreen(vm: AppViewModel, s: Session, outer: PaddingValues) {
                     // dropped at phone size), but the desktop's ledger knows.
                     if (made.isNotEmpty()) item(key = "made") { MadeStrip(vm, made) }
                     if (working) item(key = "working") { WorkingRow(s.agent, vm.phaseDetail) }
+                }
                 }
                 if (awayFromEnd) {
                     Row(
