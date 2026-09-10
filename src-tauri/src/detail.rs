@@ -18,11 +18,17 @@
 //! nothing else, and counts plus the first and last exchange are still
 //! worth having.
 
-use crate::sessions::{is_system_meta_prompt, line_may_hold_message, line_message, strip_system_tags};
+use crate::sessions::{
+    is_system_meta_prompt, line_may_hold_message, line_message, strip_system_tags,
+};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Serialize, Clone, Debug, Default, PartialEq)]
 pub struct ToolCount {
@@ -111,7 +117,10 @@ pub(crate) fn session_detail_sync(session_id: String) -> Option<SessionDetail> {
         return Some(from_messages(session_id, msgs));
     }
     let file = File::open(&path).ok()?;
-    let mut d = SessionDetail { id: session_id, ..Default::default() };
+    let mut d = SessionDetail {
+        id: session_id,
+        ..Default::default()
+    };
     let mut tools: HashMap<String, u32> = HashMap::new();
     for line in BufReader::new(file).lines().map_while(Result::ok) {
         // The cheap gate is for messages only; the bookkeeping lines
@@ -132,17 +141,28 @@ pub(crate) fn session_detail_sync(session_id: String) -> Option<SessionDetail> {
 /// Lines the message gate skips that still say something worth reading.
 fn is_bookkeeping(line: &str) -> bool {
     [
-        "\"permission-mode\"", "\"ai-title\"", "\"pr-link\"", "\"compact_boundary\"",
-        "\"session_meta\"", "\"turn_context\"", "\"token_count\"", "\"task_started\"",
-        "\"function_call\"", "\"custom_tool_call\"", "\"compacted\"", "\"aiterm-chat",
+        "\"permission-mode\"",
+        "\"ai-title\"",
+        "\"pr-link\"",
+        "\"compact_boundary\"",
+        "\"session_meta\"",
+        "\"turn_context\"",
+        "\"token_count\"",
+        "\"task_started\"",
+        "\"function_call\"",
+        "\"custom_tool_call\"",
+        "\"compacted\"",
+        "\"aiterm-chat",
     ]
     .iter()
     .any(|k| line.contains(k))
 }
 
 pub(crate) fn top_tools(tools: HashMap<String, u32>) -> Vec<ToolCount> {
-    let mut v: Vec<ToolCount> =
-        tools.into_iter().map(|(name, count)| ToolCount { name, count }).collect();
+    let mut v: Vec<ToolCount> = tools
+        .into_iter()
+        .map(|(name, count)| ToolCount { name, count })
+        .collect();
     v.sort_by(|a, b| b.count.cmp(&a.count).then(a.name.cmp(&b.name)));
     v.truncate(TOOLS_KEPT);
     v
@@ -207,7 +227,11 @@ fn patch_files(patch: &str) -> Vec<String> {
 
 /// One transcript line into the running detail. Claude's and Codex's shapes
 /// both land here; a line that is neither is a no-op.
-pub(crate) fn read_line(d: &mut SessionDetail, tools: &mut HashMap<String, u32>, v: &serde_json::Value) {
+pub(crate) fn read_line(
+    d: &mut SessionDetail,
+    tools: &mut HashMap<String, u32>,
+    v: &serde_json::Value,
+) {
     if let Some(ts) = str_at(v, "/timestamp") {
         note_stamp(d, ts);
     } else if let Some(ms) = u64_at(v, "/at") {
@@ -311,7 +335,10 @@ pub(crate) fn read_line(d: &mut SessionDetail, tools: &mut HashMap<String, u32>,
         "response_item" => {
             // `function_call` is a declared tool; `custom_tool_call` is the
             // freeform kind — codex's `exec` and `apply_patch` arrive so.
-            if matches!(str_at(v, "/payload/type"), Some("function_call" | "custom_tool_call")) {
+            if matches!(
+                str_at(v, "/payload/type"),
+                Some("function_call" | "custom_tool_call")
+            ) {
                 d.tool_calls += 1;
                 let name = str_at(v, "/payload/name").unwrap_or("tool");
                 *tools.entry(name.to_string()).or_insert(0) += 1;
@@ -359,7 +386,9 @@ pub(crate) fn read_line(d: &mut SessionDetail, tools: &mut HashMap<String, u32>,
                 let name = str_at(b, "/name").unwrap_or("tool");
                 *tools.entry(name.to_string()).or_insert(0) += 1;
                 if matches!(name, "Edit" | "Write" | "MultiEdit" | "NotebookEdit") {
-                    if let Some(p) = str_at(b, "/input/file_path").or(str_at(b, "/input/notebook_path")) {
+                    if let Some(p) =
+                        str_at(b, "/input/file_path").or(str_at(b, "/input/notebook_path"))
+                    {
                         touch_file(&mut d.files, p);
                     }
                 }
@@ -426,7 +455,10 @@ pub(crate) fn note_message(d: &mut SessionDetail, role: &str, text: &str) {
 /// A conversation handed over whole by a provider that keeps no transcript
 /// file: what can be said from `(role, text)` alone.
 fn from_messages(id: String, msgs: Vec<(String, String)>) -> SessionDetail {
-    let mut d = SessionDetail { id, ..Default::default() };
+    let mut d = SessionDetail {
+        id,
+        ..Default::default()
+    };
     for (role, text) in msgs {
         if role == "user" && is_codex_agents_preamble(&text) {
             continue;
@@ -478,18 +510,36 @@ mod tests {
         assert_eq!(d.cwd.as_deref(), Some("/w"));
         assert_eq!(d.branch.as_deref(), Some("5lime"));
         assert_eq!(d.cli_version.as_deref(), Some("2.1.0"));
-        assert_eq!(d.models, vec!["claude-fable-5"], "sidechain model is not the session's");
+        assert_eq!(
+            d.models,
+            vec!["claude-fable-5"],
+            "sidechain model is not the session's"
+        );
         assert_eq!(d.effort.as_deref(), Some("high"));
         assert_eq!(d.permission_mode.as_deref(), Some("auto"));
         assert_eq!((d.user_messages, d.assistant_messages), (1, 2));
         assert_eq!(d.tool_calls, 4);
-        assert_eq!(d.tools[0], ToolCount { name: "Edit".into(), count: 3 });
-        assert_eq!(d.context_tokens, Some(205), "last main-thread turn's input side");
+        assert_eq!(
+            d.tools[0],
+            ToolCount {
+                name: "Edit".into(),
+                count: 3
+            }
+        );
+        assert_eq!(
+            d.context_tokens,
+            Some(205),
+            "last main-thread turn's input side"
+        );
         assert_eq!(d.output_tokens, 100, "sidechain output not counted");
         assert_eq!(d.title.as_deref(), Some("Bigger icons"));
         assert_eq!(d.first_prompt.as_deref(), Some("make the icons bigger"));
         assert_eq!(d.last_assistant.as_deref(), Some("Done — a.css and b.ts."));
-        assert_eq!(d.files, vec!["/w/a.css", "/w/b.ts"], "most recent first, no repeats");
+        assert_eq!(
+            d.files,
+            vec!["/w/a.css", "/w/b.ts"],
+            "most recent first, no repeats"
+        );
         assert_eq!(d.pr_links, vec!["https://github.com/x/y/pull/13"]);
         assert_eq!(d.compactions, 1);
     }
@@ -517,9 +567,22 @@ mod tests {
         assert_eq!(d.context_tokens, Some(15612));
         assert_eq!(d.output_tokens, 14);
         assert_eq!(d.tool_calls, 1);
-        assert_eq!(d.tools, vec![ToolCount { name: "shell".into(), count: 1 }]);
-        assert_eq!(d.user_messages, 1, "the AGENTS.md preamble is not the conversation");
-        assert_eq!(d.first_prompt.as_deref(), Some("hi"), "the preamble is never the first prompt");
+        assert_eq!(
+            d.tools,
+            vec![ToolCount {
+                name: "shell".into(),
+                count: 1
+            }]
+        );
+        assert_eq!(
+            d.user_messages, 1,
+            "the AGENTS.md preamble is not the conversation"
+        );
+        assert_eq!(
+            d.first_prompt.as_deref(),
+            Some("hi"),
+            "the preamble is never the first prompt"
+        );
         assert_eq!(d.last_assistant.as_deref(), Some("Hey John!"));
         assert_eq!(d.compactions, 1, "codex's `compacted` record counts too");
     }
@@ -529,7 +592,10 @@ mod tests {
         let d = feed(&[
             json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for this repo need a rewrite — draft one"}]}}),
         ]);
-        assert_eq!(d.user_messages, 1, "no <INSTRUCTIONS> block: the person's own words");
+        assert_eq!(
+            d.user_messages, 1,
+            "no <INSTRUCTIONS> block: the person's own words"
+        );
         assert_eq!(
             d.first_prompt.as_deref(),
             Some("# AGENTS.md instructions for this repo need a rewrite — draft one")
@@ -543,17 +609,54 @@ mod tests {
     #[test]
     fn codex_exec_one_liners_read_the_command() {
         // Flagship: bare `cmd:` key, other keys quoted, plan call in the same input.
-        let js = line_events(&json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec",
-            "input":"const p = await tools.update_plan({plan:[\n  {step:\"Read hello.txt\",status:\"in_progress\"}\n]});\nconst r = await tools.exec_command({cmd:\"sed -n '1,200p' hello.txt\",\"workdir\":\"/w\"})"}}));
-        assert_eq!(js, vec![("exec".to_string(), "sed -n '1,200p' hello.txt".to_string())]);
+        let js = line_events(
+            &json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec",
+            "input":"const p = await tools.update_plan({plan:[\n  {step:\"Read hello.txt\",status:\"in_progress\"}\n]});\nconst r = await tools.exec_command({cmd:\"sed -n '1,200p' hello.txt\",\"workdir\":\"/w\"})"}}),
+        );
+        assert_eq!(
+            js,
+            vec![("exec".to_string(), "sed -n '1,200p' hello.txt".to_string())]
+        );
         // Older rollouts quote the key.
-        let quoted = line_events(&json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec",
-            "input":"const r = await tools.exec_command({\"cmd\":\"ls -la\"})"}}));
+        let quoted = line_events(
+            &json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec",
+            "input":"const r = await tools.exec_command({\"cmd\":\"ls -la\"})"}}),
+        );
         assert_eq!(quoted, vec![("exec".to_string(), "ls -la".to_string())]);
         // Mini: JSON arguments on a declared `exec_command` tool.
-        let json_args = line_events(&json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command",
-            "arguments":"{\"cmd\":\"wc -c hello.txt\",\"workdir\":\"/w\",\"yield_time_ms\":10000,\"max_output_tokens\":4000}"}}));
-        assert_eq!(json_args, vec![("exec".to_string(), "wc -c hello.txt".to_string())]);
+        let json_args = line_events(
+            &json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command",
+            "arguments":"{\"cmd\":\"wc -c hello.txt\",\"workdir\":\"/w\",\"yield_time_ms\":10000,\"max_output_tokens\":4000}"}}),
+        );
+        assert_eq!(
+            json_args,
+            vec![("exec".to_string(), "wc -c hello.txt".to_string())]
+        );
+
+        let many = line_events(
+            &json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec",
+            "input":"const a = await tools.exec_command({cmd:\"cargo test\"}); const b = await tools.exec_command({cmd:\"cargo check\"});"}}),
+        );
+        assert_eq!(
+            many,
+            vec![("exec".to_string(), "cargo test\ncargo check".to_string())]
+        );
+
+        let patch = line_events(
+            &json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec",
+            "input":"const patch = \"*** Begin Patch\\n*** Update File: src/lib.rs\\n*** End Patch\"; text(await tools.apply_patch(patch));"}}),
+        );
+        assert_eq!(patch[0].0, "apply_patch");
+        assert!(patch[0].1.contains("src/lib.rs"));
+
+        let waited = line_events(
+            &json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec",
+            "input":"const r = await tools.write_stdin({session_id:42,chars:\"\"})"}}),
+        );
+        assert_eq!(
+            waited,
+            vec![("wait".to_string(), "Background command".to_string())]
+        );
     }
 
     #[test]
@@ -564,8 +667,24 @@ mod tests {
             json!({"timestamp":"2026-08-17T16:13:45Z","type":"response_item","payload":{"type":"function_call","name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\\n*** Update File: src/a.rs\\n*** End Patch\"}"}}),
         ]);
         assert_eq!(d.tool_calls, 3);
-        assert_eq!(d.tools, vec![ToolCount { name: "apply_patch".into(), count: 2 }, ToolCount { name: "exec".into(), count: 1 }]);
-        assert_eq!(d.files, vec!["src/a.rs", "src/b.rs"], "most recent touch first");
+        assert_eq!(
+            d.tools,
+            vec![
+                ToolCount {
+                    name: "apply_patch".into(),
+                    count: 2
+                },
+                ToolCount {
+                    name: "exec".into(),
+                    count: 1
+                }
+            ]
+        );
+        assert_eq!(
+            d.files,
+            vec!["src/a.rs", "src/b.rs"],
+            "most recent touch first"
+        );
     }
 
     #[test]
@@ -615,11 +734,15 @@ pub async fn session_conversation(session_id: String, max_chars: usize) -> Vec<(
 
 pub(crate) fn conversation_sync(session_id: &str, max_chars: usize) -> Vec<(String, String)> {
     let list = crate::agents::backends();
-    let Some((backend, path)) = crate::agents::owner_in(&list, session_id) else { return vec![] };
+    let Some((backend, path)) = crate::agents::owner_in(&list, session_id) else {
+        return vec![];
+    };
     let mut turns: Vec<(String, String)> = match backend.sessions().messages(session_id) {
         Some(m) => m,
         None => {
-            let Ok(file) = File::open(&path) else { return vec![] };
+            let Ok(file) = File::open(&path) else {
+                return vec![];
+            };
             BufReader::new(file)
                 .lines()
                 .map_while(Result::ok)
@@ -630,7 +753,9 @@ pub(crate) fn conversation_sync(session_id: &str, max_chars: usize) -> Vec<(Stri
         }
     };
     turns.retain(|(_, t)| {
-        !crate::sessions::is_only_system_block(t) && !is_codex_agents_preamble(t) && !t.trim().is_empty()
+        !crate::sessions::is_only_system_block(t)
+            && !is_codex_agents_preamble(t)
+            && !t.trim().is_empty()
     });
     // Adjacent same-role turns (an assistant that spoke, used a tool, spoke
     // again) read as one.
@@ -660,7 +785,13 @@ pub(crate) fn conversation_sync(session_id: &str, max_chars: usize) -> Vec<(Stri
         tail.push(turn);
     }
     tail.reverse();
-    let mut out = vec![first, ("system".into(), "[… earlier turns omitted for length …]".into())];
+    let mut out = vec![
+        first,
+        (
+            "system".into(),
+            "[… earlier turns omitted for length …]".into(),
+        ),
+    ];
     out.extend(tail);
     out
 }
@@ -673,25 +804,32 @@ pub(crate) fn conversation_sync(session_id: &str, max_chars: usize) -> Vec<(Stri
 pub async fn session_transcript_path(session_id: String) -> Result<String, String> {
     crate::run_blocking(move || {
         let list = crate::agents::backends();
-        let (backend, path) = crate::agents::owner_in(&list, &session_id).ok_or("no transcript for that session")?;
+        let (backend, path) =
+            crate::agents::owner_in(&list, &session_id).ok_or("no transcript for that session")?;
         if backend.sessions().messages(&session_id).is_none() && path.is_file() {
             return Ok(path.to_string_lossy().into_owned());
         }
         let turns = conversation_sync(&session_id, usize::MAX);
-        let dir = dirs::home_dir().ok_or("no home directory")?.join(".local/share/aiterm/relay");
+        let dir = dirs::home_dir()
+            .ok_or("no home directory")?
+            .join(".local/share/aiterm/relay");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let f = dir.join(format!("{session_id}.txt"));
-        let text: String = turns.iter().map(|(r, t)| format!("[{r}]\n{t}\n\n")).collect();
+        let text: String = turns
+            .iter()
+            .map(|(r, t)| format!("[{r}]\n{t}\n\n"))
+            .collect();
         std::fs::write(&f, text).map_err(|e| e.to_string())?;
         Ok(f.to_string_lossy().into_owned())
     })
     .await
 }
 
-/// The conversation with the work shown: every message, plus each tool
-/// call as a turn named for the tool, and (Codex) reasoning summaries as
-/// "thinking". This is what a phone renders while an agent works — the
-/// desktop's own preview stays on the message-only parser above.
+/// The conversation with the work shown: every message, plus each tool call
+/// as a turn named for the tool, bounded tool results, sub-agent messages,
+/// and (Codex) reasoning summaries as "thinking". This is what a phone
+/// renders while an agent works — the desktop's own preview stays on the
+/// message-only parser above.
 pub async fn conversation_rich(session_id: String, max_chars: usize) -> Vec<(String, String)> {
     crate::run_blocking(move || conversation_rich_sync(&session_id, max_chars)).await
 }
@@ -705,36 +843,186 @@ pub(crate) fn conversation_rich_service(
     conversation_rich_sync(session_id, max_chars)
 }
 
+const RICH_FILE_CACHE_LIMIT: usize = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RichFileIdentity {
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+impl RichFileIdentity {
+    fn from(metadata: &std::fs::Metadata) -> Self {
+        Self {
+            #[cfg(unix)]
+            device: metadata.dev(),
+            #[cfg(unix)]
+            inode: metadata.ino(),
+        }
+    }
+}
+
+struct RichFileCacheEntry {
+    path: PathBuf,
+    identity: RichFileIdentity,
+    offset: u64,
+    turns: Vec<(String, String)>,
+    last_used: u64,
+}
+
+#[derive(Default)]
+struct RichFileCache {
+    entries: HashMap<String, RichFileCacheEntry>,
+    clock: u64,
+}
+
+const RICH_FILE_CACHE_TEXT_BYTES: usize = 2 * 1024 * 1024;
+const RICH_CACHE_OMISSION: &str = "[… older rich activity omitted from cache …]";
+
+fn rich_file_cache() -> &'static Mutex<RichFileCache> {
+    static CACHE: OnceLock<Mutex<RichFileCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(RichFileCache::default()))
+}
+
+fn bound_cached_rich_turns(turns: &mut Vec<(String, String)>) {
+    let total = turns.iter().map(|(_, text)| text.len()).sum::<usize>();
+    if total <= RICH_FILE_CACHE_TEXT_BYTES {
+        return;
+    }
+    let first_index = turns.iter().position(|(_, text)| {
+        !crate::sessions::is_only_system_block(text)
+            && !is_codex_agents_preamble(text)
+            && !text.trim().is_empty()
+    });
+    let first = first_index
+        .and_then(|index| turns.get(index).cloned())
+        .map(|(role, text)| (role, cap(&text, 64 * 1024)));
+    let reserved = first.as_ref().map_or(0, |(_, text)| text.len()) + RICH_CACHE_OMISSION.len();
+    let mut budget = RICH_FILE_CACHE_TEXT_BYTES.saturating_sub(reserved);
+    let mut tail = Vec::new();
+    for (index, turn) in turns.iter().enumerate().rev() {
+        if first_index.is_some_and(|first_index| index <= first_index) {
+            break;
+        }
+        if turn.1.len() > budget {
+            break;
+        }
+        budget -= turn.1.len();
+        tail.push(turn.clone());
+    }
+    tail.reverse();
+    turns.clear();
+    if let Some(first) = first {
+        turns.push(first);
+    }
+    turns.push(("system".into(), RICH_CACHE_OMISSION.into()));
+    turns.extend(tail);
+}
+
+/// Read a growing transcript once, then parse only complete lines appended
+/// since the previous phone refresh. A long-running Codex rollout can exceed
+/// 100 MiB; reparsing it every 1.5 seconds made the structured view visibly
+/// trail the terminal even though the transcript already contained the turn.
+///
+/// The held file's identity and length make replacement (`/clear`) and
+/// truncation reset the cache. A partial final JSONL line is deliberately left
+/// before `offset` so the next append retries it rather than losing a message.
+fn cached_rich_file_events(session_id: &str, path: &Path) -> Vec<(String, String)> {
+    let Ok(mut file) = File::open(path) else {
+        return Vec::new();
+    };
+    let Ok(metadata) = file.metadata() else {
+        return Vec::new();
+    };
+    let identity = RichFileIdentity::from(&metadata);
+    let mut cache = rich_file_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache.clock = cache.clock.wrapping_add(1);
+    let now = cache.clock;
+
+    let reset = cache.entries.get(session_id).is_none_or(|entry| {
+        entry.path != path || entry.identity != identity || metadata.len() < entry.offset
+    });
+    if reset {
+        if !cache.entries.contains_key(session_id) && cache.entries.len() >= RICH_FILE_CACHE_LIMIT {
+            if let Some(oldest) = cache
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(id, _)| id.clone())
+            {
+                cache.entries.remove(&oldest);
+            }
+        }
+        cache.entries.insert(
+            session_id.to_string(),
+            RichFileCacheEntry {
+                path: path.to_path_buf(),
+                identity,
+                offset: 0,
+                turns: Vec::new(),
+                last_used: now,
+            },
+        );
+    }
+
+    let entry = cache
+        .entries
+        .get_mut(session_id)
+        .expect("rich cache entry was inserted");
+    entry.last_used = now;
+    if file.seek(SeekFrom::Start(entry.offset)).is_err() {
+        return entry.turns.clone();
+    }
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let Ok(read) = reader.read_line(&mut line) else {
+            break;
+        };
+        if read == 0 || !line.ends_with('\n') {
+            break;
+        }
+        entry.offset = entry.offset.saturating_add(read as u64);
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim_end()) else {
+            continue;
+        };
+        if value.get("isSidechain").and_then(|flag| flag.as_bool()) == Some(true)
+            || value.get("isMeta").and_then(|flag| flag.as_bool()) == Some(true)
+        {
+            continue;
+        }
+        entry.turns.extend(line_events(&value));
+    }
+    bound_cached_rich_turns(&mut entry.turns);
+    entry.turns.clone()
+}
+
 fn conversation_rich_sync(session_id: &str, max_chars: usize) -> Vec<(String, String)> {
     let list = crate::agents::backends();
-    let Some((backend, path)) = crate::agents::owner_in(&list, session_id) else { return vec![] };
+    let Some((backend, path)) = crate::agents::owner_in(&list, session_id) else {
+        return vec![];
+    };
     let mut turns: Vec<(String, String)> = match backend.sessions().messages(session_id) {
         Some(m) => m,
-        None => {
-            let Ok(file) = File::open(&path) else { return vec![] };
-            BufReader::new(file)
-                .lines()
-                .map_while(Result::ok)
-                .filter(|l| l.contains("\"type\""))
-                .filter_map(|l| serde_json::from_str::<serde_json::Value>(&l).ok())
-                .filter(|v| v.get("isSidechain").and_then(|b| b.as_bool()) != Some(true))
-                // Harness-to-model text (a loaded skill's body) rides in
-                // isMeta:true user records; line_message filters it, but this
-                // path parses with line_events — same rule applies.
-                // [observed: Claude Code 2.1.251, 2026-08-31]
-                .filter(|v| v.get("isMeta").and_then(|b| b.as_bool()) != Some(true))
-                .flat_map(|v| line_events(&v))
-                .collect()
-        }
+        None => cached_rich_file_events(session_id, &path),
     };
     turns.retain(|(_, t)| {
-        !crate::sessions::is_only_system_block(t) && !is_codex_agents_preamble(t) && !t.trim().is_empty()
+        !crate::sessions::is_only_system_block(t)
+            && !is_codex_agents_preamble(t)
+            && !t.trim().is_empty()
     });
     let mut merged: Vec<(String, String)> = Vec::new();
     for (role, text) in turns {
         match merged.last_mut() {
             // Same speaker twice in a row reads as one; tool calls stay separate.
-            Some((r, t)) if *r == role && (role == "user" || role == "assistant" || role == "thinking") => {
+            Some((r, t))
+                if *r == role && (role == "user" || role == "assistant" || role == "thinking") =>
+            {
                 t.push_str("\n\n");
                 t.push_str(&text);
             }
@@ -756,33 +1044,64 @@ fn conversation_rich_sync(session_id: &str, max_chars: usize) -> Vec<(String, St
         tail.push(turn);
     }
     tail.reverse();
-    let mut out = vec![first, ("system".into(), "[… earlier turns omitted for length …]".into())];
+    let mut out = vec![
+        first,
+        (
+            "system".into(),
+            "[… earlier turns omitted for length …]".into(),
+        ),
+    ];
     out.extend(tail);
     out
 }
 
-const TOOL_TEXT_CAP: usize = 600;
+const TOOL_INPUT_TEXT_CAP: usize = 4 * 1024;
+const TOOL_OUTPUT_TEXT_CAP: usize = 8 * 1024;
 
-fn cap(s: &str) -> String {
-    if s.len() <= TOOL_TEXT_CAP {
+fn cap(s: &str, max: usize) -> String {
+    if s.len() <= max {
         return s.to_string();
     }
-    let mut end = TOOL_TEXT_CAP;
+    const MARKER: &str = "…";
+    let mut end = max.saturating_sub(MARKER.len());
     while !s.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}…", &s[..end])
+    format!("{}{MARKER}", &s[..end])
+}
+
+fn content_text(content: Option<&serde_json::Value>) -> String {
+    let Some(content) = content else {
+        return String::new();
+    };
+    match content {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(blocks) => blocks
+            .iter()
+            .filter_map(|block| {
+                block
+                    .get("text")
+                    .and_then(|text| text.as_str())
+                    .or_else(|| block.as_str())
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
 }
 
 /// One transcript line → zero or more turns. Claude's assistant lines carry
-/// text and tool_use blocks side by side; Codex writes each item on its own
-/// line. Tool results and outputs are left out — the call says what
-/// happened, the output is mostly noise at phone size.
+/// text and tool-use blocks side by side; Codex writes each item on its own
+/// line. Results stay bounded and collapse into the activity group on the
+/// phone, so useful command output remains available without taking over the
+/// conversation.
 fn line_events(v: &serde_json::Value) -> Vec<(String, String)> {
     let mut out = Vec::new();
     match v.get("type").and_then(|t| t.as_str()) {
         Some(r @ ("user" | "assistant")) => {
-            let Some(content) = v.pointer("/message/content") else { return out };
+            let Some(content) = v.pointer("/message/content") else {
+                return out;
+            };
             match content {
                 serde_json::Value::String(s) => out.push((r.to_string(), s.clone())),
                 serde_json::Value::Array(blocks) => {
@@ -794,9 +1113,23 @@ fn line_events(v: &serde_json::Value) -> Vec<(String, String)> {
                                     out.push((r.to_string(), std::mem::take(&mut text)));
                                 }
                                 let name = b.get("name").and_then(|n| n.as_str()).unwrap_or("tool");
-                                out.push((name.to_string(), cap(&tool_input_summary(b.get("input")))));
+                                out.push((
+                                    name.to_string(),
+                                    cap(&tool_input_summary(b.get("input")), TOOL_INPUT_TEXT_CAP),
+                                ));
                             }
-                            Some("tool_result") => {}
+                            Some("tool_result") => {
+                                if !text.trim().is_empty() {
+                                    out.push((r.to_string(), std::mem::take(&mut text)));
+                                }
+                                let result = content_text(b.get("content"));
+                                if !result.trim().is_empty() {
+                                    out.push((
+                                        "tool_output".into(),
+                                        cap(&result, TOOL_OUTPUT_TEXT_CAP),
+                                    ));
+                                }
+                            }
                             _ => {
                                 if let Some(t) = b.get("text").and_then(|t| t.as_str()) {
                                     if !text.is_empty() {
@@ -815,7 +1148,9 @@ fn line_events(v: &serde_json::Value) -> Vec<(String, String)> {
             }
         }
         Some("response_item") => {
-            let Some(p) = v.get("payload") else { return out };
+            let Some(p) = v.get("payload") else {
+                return out;
+            };
             match p.get("type").and_then(|t| t.as_str()) {
                 Some("message") => {
                     if let Some(t) = crate::sessions::line_message(v) {
@@ -837,7 +1172,24 @@ fn line_events(v: &serde_json::Value) -> Vec<(String, String)> {
                     } else {
                         (name.to_string(), input)
                     };
-                    out.push((name, cap(&text)));
+                    out.push((name, cap(&text, TOOL_INPUT_TEXT_CAP)));
+                }
+                Some("custom_tool_call_output") | Some("function_call_output") => {
+                    let result = content_text(p.get("output"));
+                    if !result.trim().is_empty() {
+                        out.push(("tool_output".into(), cap(&result, TOOL_OUTPUT_TEXT_CAP)));
+                    }
+                }
+                Some("agent_message") => {
+                    let message = content_text(p.get("content"));
+                    if !message.trim().is_empty() {
+                        let author = p.get("author").and_then(|author| author.as_str());
+                        let text = match author {
+                            Some(author) if !author.is_empty() => format!("{author}\n{message}"),
+                            _ => message,
+                        };
+                        out.push(("agent_message".into(), cap(&text, TOOL_OUTPUT_TEXT_CAP)));
+                    }
                 }
                 Some("reasoning") => {
                     let mut text = String::new();
@@ -879,14 +1231,41 @@ fn codex_exec_summary(name: &str, input: &str) -> (String, String) {
             .unwrap_or_else(|| "Generating an image".into());
         return ("image".into(), text);
     }
+    if input.contains("tools.apply_patch(") {
+        let text = js_string_after(input, "const patch = \"")
+            .unwrap_or_else(|| "Applied a source patch".into());
+        return ("apply_patch".into(), text);
+    }
+    if input.contains("tools.write_stdin(") || input.contains("tools.wait(") {
+        return ("wait".into(), "Background command".into());
+    }
     if input.contains("tools.exec_command(") || name == "exec_command" {
-        if let Some(cmd) =
-            js_string_after(input, "\"cmd\":\"").or_else(|| js_string_after(input, "cmd:\""))
-        {
-            return ("exec".into(), cmd);
+        let commands = js_strings_after(input, &["\"cmd\":\"", "cmd:\""]);
+        if !commands.is_empty() {
+            return ("exec".into(), commands.join("\n"));
         }
     }
     ("exec".into(), input.to_string())
+}
+
+fn js_strings_after(s: &str, keys: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cursor = 0;
+    while cursor < s.len() {
+        let next = keys
+            .iter()
+            .filter_map(|key| s[cursor..].find(key).map(|position| (position, *key)))
+            .min_by_key(|(position, _)| *position);
+        let Some((position, key)) = next else {
+            break;
+        };
+        let start = cursor + position;
+        if let Some(value) = js_string_after(&s[start..], key) {
+            out.push(value);
+        }
+        cursor = start + key.len();
+    }
+    out
 }
 
 /// The double-quoted string starting right after `key`, JSON-style escapes
@@ -919,9 +1298,21 @@ fn js_string_after(s: &str, key: &str) -> Option<String> {
 /// the path for file tools, the pattern for searches, else the JSON.
 pub(crate) fn tool_input_summary(input: Option<&serde_json::Value>) -> String {
     let Some(i) = input else { return String::new() };
-    for key in ["command", "file_path", "path", "pattern", "query", "description", "prompt", "url"] {
+    for key in [
+        "command",
+        "file_path",
+        "path",
+        "pattern",
+        "query",
+        "description",
+        "prompt",
+        "url",
+    ] {
         if let Some(s) = i.get(key).and_then(|s| s.as_str()) {
-            let extra = i.get("description").and_then(|d| d.as_str()).filter(|_| key != "description");
+            let extra = i
+                .get("description")
+                .and_then(|d| d.as_str())
+                .filter(|_| key != "description");
             return match extra {
                 Some(d) => format!("{s}\n{d}"),
                 None => s.to_string(),
@@ -933,14 +1324,154 @@ pub(crate) fn tool_input_summary(input: Option<&serde_json::Value>) -> String {
 
 #[cfg(test)]
 mod conversation_tests {
+    use std::io::Write;
+
+    fn record(role: &str, text: &str) -> String {
+        serde_json::json!({"type": role, "message": {"content": text}}).to_string()
+    }
+
+    #[test]
+    fn rich_file_cache_tails_complete_lines_and_resets_after_truncation() {
+        let root = std::env::temp_dir().join(format!("aiterm-rich-tail-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("session.jsonl");
+        let session_id = format!("rich-tail-{}", uuid::Uuid::new_v4());
+        std::fs::write(&path, format!("{}\n", record("user", "first"))).unwrap();
+
+        assert_eq!(
+            super::cached_rich_file_events(&session_id, &path),
+            vec![("user".into(), "first".into())],
+        );
+
+        let mut append = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        write!(append, "{}", record("assistant", "second")).unwrap();
+        append.flush().unwrap();
+        assert_eq!(super::cached_rich_file_events(&session_id, &path).len(), 1);
+        writeln!(append).unwrap();
+        append.flush().unwrap();
+        assert_eq!(
+            super::cached_rich_file_events(&session_id, &path),
+            vec![
+                ("user".into(), "first".into()),
+                ("assistant".into(), "second".into())
+            ],
+        );
+        drop(append);
+
+        std::fs::write(&path, format!("{}\n", record("user", "fresh"))).unwrap();
+        assert_eq!(
+            super::cached_rich_file_events(&session_id, &path),
+            vec![("user".into(), "fresh".into())],
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn codex_rich_events_include_tool_outputs_and_agent_messages() {
+        let custom_output = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call_output",
+                "output": [
+                    {"type": "input_text", "text": "Script completed"},
+                    {"type": "input_text", "text": "tests: 12 passed"}
+                ]
+            }
+        });
+        assert_eq!(
+            super::line_events(&custom_output),
+            vec![(
+                "tool_output".into(),
+                "Script completed\ntests: 12 passed".into()
+            )],
+        );
+
+        let function_output = serde_json::json!({
+            "type": "response_item",
+            "payload": {"type": "function_call_output", "output": "Wait completed."}
+        });
+        assert_eq!(
+            super::line_events(&function_output),
+            vec![("tool_output".into(), "Wait completed.".into())],
+        );
+
+        let agent_message = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "agent_message",
+                "author": "/root/reviewer",
+                "content": [{"type": "input_text", "text": "Review passed."}]
+            }
+        });
+        assert_eq!(
+            super::line_events(&agent_message),
+            vec![(
+                "agent_message".into(),
+                "/root/reviewer\nReview passed.".into()
+            )],
+        );
+    }
+
+    #[test]
+    fn claude_rich_events_include_tool_results_without_making_them_user_turns() {
+        let result = serde_json::json!({
+            "type": "user",
+            "message": {
+                "content": [{
+                    "type": "tool_result",
+                    "content": [{"type": "text", "text": "cargo test: ok"}]
+                }]
+            }
+        });
+        assert_eq!(
+            super::line_events(&result),
+            vec![("tool_output".into(), "cargo test: ok".into())],
+        );
+    }
+
+    #[test]
+    fn rich_cache_keeps_the_first_real_prompt_and_newest_bounded_activity() {
+        let mut turns = vec![(
+            "user".into(),
+            "# AGENTS.md instructions for /work\n<INSTRUCTIONS>rules</INSTRUCTIONS>".into(),
+        )];
+        turns.push(("user".into(), "the real prompt".into()));
+        turns.extend((0..400).map(|index| {
+            (
+                "tool_output".into(),
+                format!("{index}:{}", "x".repeat(8_000)),
+            )
+        }));
+        turns.push(("assistant".into(), "newest answer".into()));
+
+        super::bound_cached_rich_turns(&mut turns);
+
+        assert_eq!(turns.first().unwrap().1, "the real prompt");
+        assert_eq!(turns[1].1, super::RICH_CACHE_OMISSION);
+        assert_eq!(turns.last().unwrap().1, "newest answer");
+        assert!(
+            turns.iter().map(|(_, text)| text.len()).sum::<usize>()
+                <= super::RICH_FILE_CACHE_TEXT_BYTES
+        );
+    }
+
     /// Print a real session's conversation as the relay would hand it over.
     /// `AITERM_SESSION=<id> cargo test --lib conversation_live -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn conversation_live() {
         let id = std::env::var("AITERM_SESSION").expect("AITERM_SESSION");
-        for (role, text) in super::conversation_sync(&id, 24_000) {
-            println!("[{role}] {}", if text.len() > 300 { format!("{}…", &text[..300]) } else { text });
+        let cold_started = std::time::Instant::now();
+        let _ = super::conversation_rich_sync(&id, 24_000);
+        eprintln!("cold rich read: {:?}", cold_started.elapsed());
+        let warm_started = std::time::Instant::now();
+        let messages = super::conversation_rich_sync(&id, 24_000);
+        eprintln!("warm rich read: {:?}", warm_started.elapsed());
+        for (role, text) in messages {
+            println!("[{role}] {}", super::clip(&text, 300));
         }
     }
 }
