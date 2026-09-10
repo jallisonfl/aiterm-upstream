@@ -624,14 +624,32 @@ struct CodexHeader {
 fn parse_codex_header(first_line: &str) -> Option<CodexHeader> {
     let v: serde_json::Value = serde_json::from_str(first_line).ok()?;
     let p = v.get("payload")?;
+    // Codex 0.153.4: subagents share the root session_id but have their own
+    // rollout id. They must not replace the user's transcript or timestamp.
+    if codex_is_subagent(p) {
+        return None;
+    }
     Some(CodexHeader {
-        id: p.get("session_id")?.as_str()?.to_string(),
+        id: p
+            .get("id")
+            .or_else(|| p.get("session_id"))?
+            .as_str()?
+            .to_string(),
         cwd: p.get("cwd")?.as_str()?.to_string(),
         branch: p
             .pointer("/git/branch")
             .and_then(|b| b.as_str())
             .map(String::from),
     })
+}
+
+fn codex_is_subagent(payload: &serde_json::Value) -> bool {
+    payload
+        .get("thread_source")
+        .is_some_and(|source| source.as_str() != Some("user"))
+        || payload
+            .get("source")
+            .is_some_and(|source| source.get("subagent").is_some())
 }
 
 fn codex_root() -> Option<std::path::PathBuf> {
@@ -714,14 +732,8 @@ fn scan_codex_dir_bounded(
     budget: &mut crate::sessions::DiscoveryBudget,
 ) -> Vec<(Session, std::path::PathBuf)> {
     let files = pinned_codex_rollouts_bounded(root, budget);
-    // Newer Codex writes MANY rollout files per conversation — one per turn or
-    // thread, each with its own `id` in the filename, all sharing the original
-    // conversation's `session_id` (and `parent_thread_id`) in their headers. A
-    // row per file both floods the list and, because rows key on the session
-    // id, makes a single click select every duplicate at once — and delete or
-    // resume then has no single file to act on. Collapse to one row per
-    // `session_id`, keeping the newest rollout (the live thread), the way claude
-    // fork rows and OpenCode child sessions are collapsed elsewhere.
+    // Only user roots become rows. Multiple legacy rollouts of the same root
+    // still collapse by identity, keeping the most recently modified root.
     let mut by_session: std::collections::HashMap<String, (Session, std::path::PathBuf)> =
         std::collections::HashMap::new();
     for rollout in files {
@@ -740,10 +752,9 @@ fn scan_codex_dir_bounded(
 
 /// Every rollout file that belongs to `session_id`, oldest first.
 ///
-/// A Codex conversation is not one file: it is every rollout sharing its
-/// `session_id` (see [`scan_codex_dir`]). Deleting one of them would leave the
-/// rest behind for the next scan to collapse back into a row, so the trash has
-/// to take the whole set.
+/// Include explicitly marked subagents sharing the root's session_id for
+/// family operations (trash, tasks and artifacts), without letting their
+/// timestamps or transcript paths replace the root's discovery row.
 pub fn codex_session_files(session_id: &str) -> Vec<std::path::PathBuf> {
     codex_root().map(|r| codex_session_files_in(&r, session_id)).unwrap_or_default()
 }
@@ -756,8 +767,28 @@ fn codex_session_files_in(root: &std::path::Path, session_id: &str) -> Vec<std::
     let mut mine: Vec<(u64, std::path::PathBuf)> = files
         .into_iter()
         .filter_map(|rollout| {
-            let (s, path) = read_codex_row_from(rollout.file, &rollout.path)?;
-            (s.id == session_id).then_some((s.last_active, path))
+            let metadata = rollout.file.metadata().ok()?;
+            let mut first = String::new();
+            std::io::BufRead::read_line(&mut std::io::BufReader::new(rollout.file), &mut first)
+                .ok()?;
+            let header: serde_json::Value = serde_json::from_str(&first).ok()?;
+            let payload = header.get("payload")?;
+            payload.get("cwd")?.as_str()?;
+            let owner = if codex_is_subagent(payload) {
+                payload.get("session_id")?.as_str()?
+            } else {
+                payload
+                    .get("id")
+                    .or_else(|| payload.get("session_id"))?
+                    .as_str()?
+            };
+            let modified = metadata
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_millis() as u64;
+            (owner == session_id).then_some((modified, rollout.path))
         })
         .collect();
     mine.sort_by_key(|(at, _)| *at);
@@ -766,8 +797,7 @@ fn codex_session_files_in(root: &std::path::Path, session_id: &str) -> Vec<std::
 
 /// One rollout file → its session row, or `None` if it is not a readable
 /// rollout. The unit both [`scan_codex_dir`] and [`CodexSessions::find_session_file`]
-/// build on, so the row a click selects and the file a delete moves are read
-/// the same way.
+/// build on, so the row a click selects opens its root transcript.
 fn read_codex_row_from(
     file: std::fs::File,
     path: &std::path::Path,
@@ -2201,9 +2231,8 @@ mod tests {
     }
 
     /// A delete has to take the whole conversation, so this must find every
-    /// rollout sharing the session id — not just the newest, which is all
-    /// `find_session_file` answers with. Anything left behind is collapsed
-    /// straight back into a row by the next scan.
+    /// rollout sharing the session id, including child rollouts which do not
+    /// appear as session rows.
     #[test]
     fn a_conversations_rollouts_are_all_found_for_the_trash() {
         use std::io::Write;
@@ -2232,10 +2261,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Newer Codex writes one rollout file per turn, all sharing the
-    /// conversation's `session_id`. The scan must collapse them to a single row
-    /// — the newest file — or the sidebar floods and a click selects every
-    /// duplicate. A second, separate session stays its own row.
+    /// Legacy rollouts with only session_id remain deduplicated by that id.
+    /// A second, separate session stays its own row.
     #[test]
     fn many_rollouts_of_one_session_collapse_to_the_newest() {
         use std::io::Write;
@@ -2264,6 +2291,62 @@ mod tests {
         assert_eq!(rows[0].1, newest, "the surviving file is the newest of the session");
         assert_eq!(rows[1].0.id, "sess-2");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn codex_roots_keep_their_own_identity_transcript_and_timestamp() {
+        use std::io::Write;
+        use std::time::{Duration, UNIX_EPOCH};
+        let dir = std::env::temp_dir().join(format!("aiterm-codex-roots-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |id: &str, family: &str, source: serde_json::Value, thread: &str, secs: u64| {
+            let path = dir.join(format!("rollout-{id}.jsonl"));
+            let mut file = std::fs::File::create(&path).unwrap();
+            let header = serde_json::json!({"type":"session_meta","payload":{
+                "id":id,"session_id":family,"cwd":"/home/m/proj",
+                "source":source,"thread_source":thread
+            }});
+            writeln!(file, "{header}").unwrap();
+            file.set_modified(UNIX_EPOCH + Duration::from_secs(secs))
+                .unwrap();
+            path
+        };
+        let old = write("old", "old", "cli".into(), "user", 100);
+        // A retained family id must not merge a new user root into the old row.
+        let cleared = write("cleared", "old", "cli".into(), "user", 200);
+        let child = write(
+            "child",
+            "old",
+            serde_json::json!({"subagent":{}}),
+            "subagent",
+            400,
+        );
+        let child_cli = write("child-cli", "old", "cli".into(), "subagent", 500);
+        let mut rows = scan_codex_dir(&dir);
+        rows.sort_by(|a, b| b.0.last_active.cmp(&a.0.last_active));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            (&rows[0].0.id, &rows[0].1, rows[0].0.last_active),
+            (&"cleared".to_owned(), &cleared, 200_000)
+        );
+        assert_eq!(
+            (&rows[1].0.id, &rows[1].1, rows[1].0.last_active),
+            (&"old".to_owned(), &old, 100_000)
+        );
+        assert_eq!(
+            codex_session_files_in(&dir, "old"),
+            vec![old, child, child_cli]
+        );
+        assert_eq!(codex_session_files_in(&dir, "cleared"), vec![cleared]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn codex_header_uses_id_without_requiring_a_family_id() {
+        let header = r#"{"type":"session_meta","payload":{"id":"root","cwd":"/tmp","source":"cli","thread_source":"user"}}"#;
+        assert_eq!(parse_codex_header(header).unwrap().id, "root");
+        let child = r#"{"payload":{"id":"child","session_id":"root","cwd":"/tmp","source":{"subagent":{}}}}"#;
+        assert_eq!(parse_codex_header(child), None);
     }
 
     /// A session row with only the fields adoption looks at.

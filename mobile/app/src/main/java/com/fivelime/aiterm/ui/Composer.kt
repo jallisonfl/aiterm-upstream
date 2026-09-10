@@ -38,17 +38,58 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.fivelime.aiterm.AppViewModel
 import com.fivelime.aiterm.Attachment
+import kotlinx.coroutines.launch
 
 /** The `+` in a composer: pick any file or image; it uploads to the desktop
  *  and appears as a chip until sent. */
 @Composable
 fun AttachButton(vm: AppViewModel) {
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let(vm::attach) }
+    // The window this app draws, for "attach what I am looking at": a
+    // screenshot of the conversation or the terminal, sent like any file.
+    val root = androidx.compose.ui.platform.LocalView.current.rootView
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var menu by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     if (vm.uploading) {
         CircularProgressIndicator(Modifier.padding(12.dp).size(22.dp), strokeWidth = 2.dp)
-    } else {
-        IconButton(onClick = { pick.launch("*/*") }) { Icon(Icons.Filled.Add, "Attach a file or image", tint = Muted) }
+        return
     }
+    androidx.compose.foundation.layout.Box {
+        IconButton(onClick = { menu = true }) { Icon(Icons.Filled.Add, "Attach a file, image or screenshot", tint = Muted) }
+        androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("File or image") },
+                onClick = { menu = false; pick.launch("*/*") },
+            )
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("Screenshot of this screen") },
+                onClick = {
+                    menu = false
+                    scope.launch {
+                        // Two frames, so the menu is gone before the window is drawn.
+                        androidx.compose.runtime.withFrameNanos { }
+                        androidx.compose.runtime.withFrameNanos { }
+                        val bytes = captureView(root)
+                        if (bytes == null) vm.notice = "Could not capture this screen."
+                        else vm.attachBytes("screenshot-" + System.currentTimeMillis() + ".jpg", bytes)
+                    }
+                },
+            )
+        }
+    }
+}
+
+/** The view drawn into a JPEG, on the main thread; null when it has no size yet. */
+private fun captureView(view: android.view.View): ByteArray? {
+    if (!view.isAttachedToWindow || view.width <= 0 || view.height <= 0) return null
+    val bmp = android.graphics.Bitmap.createBitmap(view.width, view.height, android.graphics.Bitmap.Config.ARGB_8888)
+    return try {
+        view.draw(android.graphics.Canvas(bmp))
+        java.io.ByteArrayOutputStream().use { out ->
+            if (!bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)) return null
+            out.toByteArray()
+        }
+    } catch (_: Exception) { null } finally { bmp.recycle() }
 }
 
 @Composable

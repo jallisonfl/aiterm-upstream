@@ -115,6 +115,19 @@ fn map_turn(index: usize, (role, text): &(String, String)) -> (u64, Kind) {
         // `conversation_rich` inserts when a conversation is over budget.
         // It is prose about the conversation, not a tool that ran.
         "system" => Kind::AgentText { id, text: text.clone(), done: true },
+        // Codex's `agent_message` items are the agent speaking, author-prefixed.
+        "agent_message" => Kind::AgentText { id, text: text.clone(), done: true },
+        // A tool's result, which `conversation_rich` now carries. The call it
+        // answers is not reliably the turn before it (a Claude message can
+        // hold several calls before their results), so it is its own card.
+        "tool_output" => Kind::ToolCall {
+            id,
+            tool: "tool_output".to_string(),
+            title: "Tool output".to_string(),
+            category: ToolCategory::Other,
+            input: clip(text, INPUT_CLIP),
+            status: ToolStatus::Completed,
+        },
         // Anything else IS the tool's name — that is how `line_events`
         // encodes a tool call. The result is not in this stream, so the
         // call is reported already finished.
@@ -195,6 +208,16 @@ mod tests {
             got[3],
             Kind::AgentText { id: "legacy:3".into(), text: "done".into(), done: true }
         );
+    }
+
+    #[test]
+    fn tool_output_and_agent_message_are_not_mistaken_for_tools() {
+        let got = kinds(diff(
+            &mut Vec::new(),
+            turns(&[("tool_output", "exit 0"), ("agent_message", "codex: done")]),
+        ));
+        assert!(matches!(&got[0], Kind::ToolCall { title, status: ToolStatus::Completed, .. } if title == "Tool output"));
+        assert!(matches!(&got[1], Kind::AgentText { text, done: true, .. } if text == "codex: done"));
     }
 
     #[test]

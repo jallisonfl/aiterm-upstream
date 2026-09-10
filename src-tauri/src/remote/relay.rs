@@ -87,8 +87,15 @@ impl RelayServerConfig {
         std::fs::create_dir_all(root).map_err(|error| error.to_string())?;
         set_private_permissions(root, 0o700).map_err(|error| error.to_string())?;
         let bytes = serde_json::to_vec_pretty(&validated).map_err(|error| error.to_string())?;
-        write_private_file(&root.join(SERVER_CONFIG_FILE), &bytes)
-            .map_err(|error| error.to_string())
+        let destination = root.join(SERVER_CONFIG_FILE);
+        let temporary = destination.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+        if let Err(error) = write_private_file(&temporary, &bytes)
+            .and_then(|()| std::fs::rename(&temporary, &destination))
+        {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error.to_string());
+        }
+        Ok(())
     }
 }
 
@@ -250,7 +257,15 @@ impl RelayConfig {
         std::fs::create_dir_all(root).map_err(|error| error.to_string())?;
         set_private_permissions(root, 0o700).map_err(|error| error.to_string())?;
         let bytes = serde_json::to_vec_pretty(self).map_err(|error| error.to_string())?;
-        write_private_file(&root.join(file), &bytes).map_err(|error| error.to_string())
+        let destination = root.join(file);
+        let temporary = destination.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+        if let Err(error) = write_private_file(&temporary, &bytes)
+            .and_then(|()| std::fs::rename(&temporary, &destination))
+        {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error.to_string());
+        }
+        Ok(())
     }
 
     pub async fn prepare_enrollment(
@@ -800,5 +815,18 @@ mod tests {
         assert_eq!(config.token.len(), 43);
         assert!(config.validate().is_ok());
         server.abort();
+    }
+
+    #[test]
+    fn a_saved_config_is_replaced_whole_and_leaves_no_temporary_behind() {
+        let root = std::env::temp_dir().join(format!("aiterm-relay-save-{}", uuid::Uuid::new_v4()));
+        let first = RelayConfig::load(&root).unwrap();
+        assert!(first.is_none());
+        let config = valid_config();
+        config.save(&root).unwrap();
+        config.save(&root).unwrap();
+        assert_eq!(RelayConfig::load(&root).unwrap(), Some(config));
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

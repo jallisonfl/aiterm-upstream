@@ -54,6 +54,22 @@ fn accepts_a_known_request_without_rewriting_its_identity_or_payload() {
 }
 
 #[test]
+fn accepts_the_live_conversation_cursor_through_the_wire_decoder() {
+    let payload = serde_json::json!({"session_id": "codex-session", "after": 417});
+    let mut encoded = Vec::new();
+    ciborium::into_writer(&payload, &mut encoded).unwrap();
+    let request = RemoteRequest::decode(&cbor_request(1, "session.spine", &encoded)).expect(
+        "the phone must reach the live feed instead of falling back to conversation snapshots",
+    );
+    assert_eq!(request.request_id(), 42);
+    assert_eq!(request.kind(), "session.spine");
+    assert_eq!(request.payload(), encoded);
+    let subscription = RemoteRequest::decode(&cbor_request(1, "session.spine.subscribe", &encoded))
+        .expect("subscription must pass the same authenticated gateway decoder");
+    assert_eq!(subscription.kind(), "session.spine.subscribe");
+}
+
+#[test]
 fn rejects_terminal_size_outside_bounds() {
     assert_eq!(
         TerminalSize::try_new(0, 24).unwrap_err(),

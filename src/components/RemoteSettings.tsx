@@ -53,6 +53,7 @@ import {
   phoneRemoteSetPort,
   phoneRemoteSetRoad,
   phoneRemoteSetRoadOrder,
+  phoneRemoteSetUpnp,
   phoneRemoteStatus,
 } from "../ipc";
 
@@ -633,16 +634,26 @@ export default function RemoteSettings() {
                 />
               </Row>
             )}
-            {pstatus?.running && (
-              <Row label="Router port forward" desc={
-                pstatus.upnp === "mapped" && pstatus.public_address
+            {pstatus && (
+              <Row label="Router port forward (UPnP)" desc={
+                !pstatus.upnp_enabled
+                  ? "Off. This machine never asks the router to open a port — not for the listener, not through iroh. Phones off this network use a road above."
+                  : !pstatus.running ? "On. When the listener starts, the router is asked to forward its port."
+                  : pstatus.upnp === "mapped" && pstatus.public_address
                   ? `The router is forwarding port ${pstatus.port}. The phone reaches this machine at ${pstatus.public_address} from any network.`
                   : pstatus.upnp === "searching" ? "Asking the router to forward the port…"
                   : pstatus.upnp === "no_router" ? "No UPnP router answered. From outside this network the phone needs a road above."
                   : pstatus.upnp === "refused" ? "The router refused to forward the port. Use a road above, or turn UPnP on in the router."
-                  : "Off"
+                  : "On"
               }>
-                <button className="act-btn" onClick={() => loadPhone().catch(() => {})}>Check again</button>
+                <label className="sw" aria-label="Router port forward">
+                  <input
+                    type="checkbox"
+                    checked={pstatus.upnp_enabled}
+                    onChange={(e) => runPhone(phoneRemoteSetUpnp(e.target.checked), () => { setPair(null); setInvite(null); })}
+                  />
+                  <span className="sw-track"><span className="sw-knob" /></span>
+                </label>
               </Row>
             )}
             {pstatus && (

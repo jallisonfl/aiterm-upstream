@@ -16,7 +16,7 @@ pub mod ipc;
 pub mod legacy;
 pub mod registry;
 
-pub use registry::{ensure_tail_for, push_phase, read_after, resolve_agent, Spine};
+pub use registry::{ensure_tail_for, push_phase, read_after, read_page_after, resolve_agent, Spine, SpinePage};
 
 /// What kind of thing a tool call is, so a card can wear the right mark
 /// without knowing the engine's tool names.

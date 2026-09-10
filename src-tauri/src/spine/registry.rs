@@ -165,6 +165,15 @@ impl Spine {
         self.tx.subscribe()
     }
 
+    /// Cheap high-water mark for coalesced remote change notifications.
+    pub fn latest_seq(&self, session_id: &str) -> u64 {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .map_or(0, |log| log.next_seq.saturating_sub(1))
+    }
+
     /// Stamp, store and broadcast one event. The only way anything enters
     /// the spine.
     pub fn push(&self, session_id: &str, agent: &str, ts: u64, kind: Kind) -> SpineEvent {
@@ -224,6 +233,43 @@ impl Spine {
             .get(session_id)
             .map(|log| log.events.iter().filter(|e| e.seq > after_seq).cloned().collect())
             .unwrap_or_default()
+    }
+
+
+    /// A forward, byte-bounded page for transports whose frame size is
+    /// smaller than the in-memory ring. Returning the oldest unseen events
+    /// first lets a client drain a long history without ever creating a seq
+    /// gap or rebuilding rows it already has.
+    pub fn page_after(
+        &self,
+        session_id: &str,
+        after_seq: u64,
+        max_bytes: usize,
+    ) -> (bool, u64, u64, Option<bool>, Vec<SpineEvent>) {
+        let sessions = self.sessions.lock().unwrap();
+        let Some(log) = sessions.get(session_id) else {
+            return (false, 0, 0, None, Vec::new());
+        };
+        // These bounds let a reconnecting consumer distinguish "nothing new"
+        // from "your cursor fell behind the bounded ring". Without them both
+        // cases are an empty/partial page and a phone can remain permanently
+        // stale while still looking connected.
+        let oldest_seq = log.events.front().map_or(0, |event| event.seq);
+        let latest_seq = log.events.back().map_or(0, |event| event.seq);
+        let turn_open = log.turn.map(|(open, _)| open);
+        let mut bytes = 0usize;
+        let mut events = Vec::new();
+        let mut has_more = false;
+        for event in log.events.iter().filter(|event| event.seq > after_seq) {
+            let event_bytes = weight(event);
+            if !events.is_empty() && bytes.saturating_add(event_bytes) > max_bytes {
+                has_more = true;
+                break;
+            }
+            bytes = bytes.saturating_add(event_bytes);
+            events.push(event.clone());
+        }
+        (has_more, oldest_seq, latest_seq, turn_open, events)
     }
 
     /// Every session with a log, folded to one row each — see
@@ -679,6 +725,48 @@ pub async fn read_after(
     Some((spine.epoch(), spine.is_live(session_id), spine.after(session_id, after_seq)))
 }
 
+/// A bounded page of the spine for the phone listener: `read_after` with a
+/// byte budget, plus the bounds that let a phone tell "nothing new" from
+/// "my cursor fell off the ring". See `Spine::page_after`.
+pub async fn read_page_after(
+    app: &AppHandle,
+    session_id: &str,
+    after_seq: u64,
+    max_bytes: usize,
+) -> Option<SpinePage> {
+    let spine = app.try_state::<Arc<Spine>>().map(|s| s.inner().clone())?;
+    let agent = resolve_agent(&spine, session_id).await?;
+    spine.ensure_tail(app, session_id, &agent);
+    let deadline = Instant::now() + BOOTSTRAP_GRACE;
+    while !spine.is_ready(session_id) && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let (has_more, oldest_seq, latest_seq, turn_open, events) =
+        spine.page_after(session_id, after_seq, max_bytes);
+    Some(SpinePage {
+        epoch: spine.epoch(),
+        live: spine.is_live(session_id),
+        has_more,
+        oldest_seq,
+        latest_seq,
+        turn_open,
+        events,
+    })
+}
+
+/// One page of `read_page_after`, in the shape the listener serialises.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SpinePage {
+    pub epoch: u64,
+    pub live: bool,
+    pub has_more: bool,
+    pub oldest_seq: u64,
+    pub latest_seq: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_open: Option<bool>,
+    pub events: Vec<SpineEvent>,
+}
+
 // -------------------------------------------------------------- the phase
 
 /// The driver's phase half: works out what the session is doing every tick
@@ -909,7 +997,7 @@ async fn drive(spine: Arc<Spine>, app: AppHandle, session_id: String, agent: Str
         tokio::select! {
             _ = fs.recv() => {
                 // Fold the rest of the burst into this one poll.
-                while tokio::time::timeout(COALESCE, fs.recv()).await.is_ok() {}
+                coalesce_changes(&mut fs).await;
             }
             _ = tick.tick() => {}
             _ = reap.tick() => {
@@ -958,6 +1046,18 @@ where
 /// files moves. Directories rather than the files themselves because a
 /// transcript is often replaced rather than appended (a `/clear` writes a
 /// new file), and an inotify watch on the old inode would go quiet.
+async fn coalesce_changes(fs: &mut mpsc::UnboundedReceiver<()>) {
+    // One deadline for the entire burst. Restarting a timeout after every
+    // notification can starve transcript reads indefinitely under load.
+    let deadline = tokio::time::Instant::now() + COALESCE;
+    while tokio::time::Instant::now() < deadline
+        && matches!(
+            tokio::time::timeout_at(deadline, fs.recv()).await,
+            Ok(Some(()))
+        )
+    {}
+}
+
 fn spawn_watch(paths: &[PathBuf], tx: UnboundedSender<()>) -> Option<RecommendedWatcher> {
     if paths.is_empty() {
         return None;
@@ -965,6 +1065,10 @@ fn spawn_watch(paths: &[PathBuf], tx: UnboundedSender<()>) -> Option<Recommended
     let wanted: HashSet<PathBuf> = paths.iter().cloned().collect();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(ev) = res {
+            // Reading the transcript must not wake its own watcher.
+            if !(ev.kind.is_modify() || ev.kind.is_create() || ev.kind.is_remove()) {
+                return;
+            }
             if ev.paths.iter().any(|p| wanted.contains(p)) {
                 let _ = tx.send(());
             }
@@ -993,6 +1097,25 @@ mod tests {
     use super::*;
     use crate::spine::{ToolCategory, ToolStatus};
 
+    #[tokio::test]
+    async fn continuous_notifications_cannot_starve_transcript_reads() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let writer = tokio::spawn(async move {
+            loop {
+                if tx.send(()).is_err() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+        let result = tokio::time::timeout(Duration::from_secs(2), coalesce_changes(&mut rx)).await;
+        writer.abort();
+        assert!(
+            result.is_ok(),
+            "continuous writes must not postpone reading indefinitely"
+        );
+    }
+
     fn text(id: &str, body: &str) -> Kind {
         Kind::AgentText { id: id.into(), text: body.into(), done: true }
     }
@@ -1018,6 +1141,61 @@ mod tests {
     }
 
     #[test]
+    fn remote_pages_are_forward_and_resume_without_a_sequence_gap() {
+        let spine = Spine::new();
+        for i in 0..5 {
+            spine.push("s", "codex", i, text(&format!("b{i}"), "12345"));
+        }
+        let one_event_budget = weight(&spine.after("s", 0)[0]);
+        let (more, oldest, latest, _, first) = spine.page_after("s", 0, one_event_budget);
+        assert!(more);
+        assert_eq!((oldest, latest), (1, 5));
+        assert_eq!(
+            first.iter().map(|event| event.seq).collect::<Vec<_>>(),
+            vec![1]
+        );
+
+        let (more, oldest, latest, _, second) =
+            spine.page_after("s", first.last().unwrap().seq, one_event_budget * 2);
+        assert!(more);
+        assert_eq!((oldest, latest), (1, 5));
+        assert_eq!(
+            second.iter().map(|event| event.seq).collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+
+        let (more, oldest, latest, _, tail) =
+            spine.page_after("s", second.last().unwrap().seq, usize::MAX);
+        assert!(!more);
+        assert_eq!((oldest, latest), (1, 5));
+        assert_eq!(
+            tail.iter().map(|event| event.seq).collect::<Vec<_>>(),
+            vec![4, 5]
+        );
+    }
+
+    #[test]
+    fn remote_page_carries_the_current_turn_gate_independent_of_event_history() {
+        let spine = Spine::new();
+        spine.push("s", "codex", 1, Kind::TurnStarted { turn: "t".into() });
+        let (_, _, _, open, _) = spine.page_after("s", u64::MAX, usize::MAX);
+        assert_eq!(open, Some(true));
+
+        spine.push(
+            "s",
+            "codex",
+            2,
+            Kind::TurnEnded {
+                turn: "t".into(),
+                reason: "completed".into(),
+            },
+        );
+        let (_, _, _, open, events) = spine.page_after("s", u64::MAX, usize::MAX);
+        assert!(events.is_empty());
+        assert_eq!(open, Some(false));
+    }
+
+    #[test]
     fn the_ring_drops_the_oldest_past_the_event_bound() {
         let spine = Spine::new();
         for i in 0..(MAX_EVENTS + 20) {
@@ -1028,6 +1206,9 @@ mod tests {
         // Seq keeps counting; only the storage is bounded.
         assert_eq!(held.first().unwrap().seq, 21);
         assert_eq!(held.last().unwrap().seq, (MAX_EVENTS + 20) as u64);
+        let (_, oldest, latest, _, _) = spine.page_after("s", 1, usize::MAX);
+        assert_eq!(oldest, 21);
+        assert_eq!(latest, (MAX_EVENTS + 20) as u64);
     }
 
     #[test]

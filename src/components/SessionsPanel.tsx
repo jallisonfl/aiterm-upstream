@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   Caps, ProjectInfo, Session, SessionDetail, TrashedSession, homeAbbrev, searchSessions, sessionBroughtIn, sessionDetail,
+  sessionStar, sessionStars,
 } from "../ipc";
 import SessionFlyout from "./SessionFlyout";
 import NewSessionMenu, { StartChoice, StartPoint } from "./NewSessionMenu";
 import AgentIcon from "./AgentIcon";
 import Icon from "./Icon";
 import {
-  ChevronsDownUp, ChevronsUpDown, CornerDownRight, Folder, GitBranch, GitFork, Play, RefreshCw, Search,
+  ChevronsDownUp, ChevronsUpDown, CornerDownRight, Folder, GitBranch, GitFork, Pin, Play, RefreshCw, Search,
   Settings as SettingsIcon, Trash2, Users, X,
 } from "lucide-react";
 import { agentTint } from "../brand";
@@ -210,6 +211,23 @@ export default function SessionsPanel({
     const un = listen("sessions://changed", load);
     return () => { un.then((f) => f()); };
   }, []);
+  /** Pinned sessions, from the same store the backend has kept all along
+   *  (`session_star`) — the sidebar just never drew it. A pin is a row that
+   *  stays at the top whatever the recency order does to everything else. */
+  const [stars, setStars] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const load = () => { sessionStars().then((ids) => setStars(new Set(ids))).catch(() => {}); };
+    load();
+    const un = listen("sessions://changed", load);
+    return () => { un.then((f) => f()); };
+  }, []);
+  const togglePin = (s: Session) => {
+    const on = !stars.has(s.id);
+    // Optimistic: the row moves the moment it is clicked; the reload on
+    // `sessions://changed` settles it.
+    setStars((prev) => { const next = new Set(prev); if (on) next.add(s.id); else next.delete(s.id); return next; });
+    sessionStar(s.id, on).catch(() => {});
+  };
   /** The recent list renders a window, not the archive: 500+ rows of DOM
    *  reconciled on every transcript-append reload is what made typing lag
    *  [measured 2026-08-31]. Search always looks at everything; "Show all"
@@ -474,9 +492,15 @@ export default function SessionsPanel({
     return out;
   };
   const ungrouped = useMemo(
-    () => glueCrew(applyOrder(filtered.filter((s) => !grouped.has(s.group_path)), orders["recent"])),
+    () => glueCrew(applyOrder(filtered.filter((s) => !grouped.has(s.group_path) && !stars.has(s.id)), orders["recent"])),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filtered, grouped, orders, broughtIn, foldedCrews],
+    [filtered, grouped, orders, broughtIn, foldedCrews, stars],
+  );
+  /** Pinned rows, newest first. Drawn above every view; a search reaches
+   *  them through the list like anything else. */
+  const pinned = useMemo(
+    () => filtered.filter((s) => stars.has(s.id)).sort((a, b) => b.last_active - a.last_active),
+    [filtered, stars],
   );
   /** Rows drawn indented: brought-in agents whose master is in the list. */
   const satellites = useMemo(() => {
@@ -1039,6 +1063,11 @@ export default function SessionsPanel({
             </>
           ) : (
             <>
+              <button
+                className={"act-btn" + (stars.has(s.id) ? " on" : "")}
+                title={stars.has(s.id) ? "Unpin" : "Pin to the top"}
+                onClick={() => togglePin(s)}
+              ><Icon of={Pin} size="sm" /></button>
               {/* Resume is the way into a session, always — the same move you
                   make in a shell: quit what's running, then `claude --resume`.
                   It used to be hidden whenever the roster called the session
@@ -1315,6 +1344,19 @@ export default function SessionsPanel({
         {pending.length > 0 && (
           <div className="session-group">
             {pending.map(renderPending)}
+          </div>
+        )}
+        {!searchList && pinned.length > 0 && (
+          <div className="session-group pinned">
+            <div
+              className="group-header static clickable"
+              onClick={() => toggleSection("pinned")}
+            >
+              <span className={"chevron" + (sectionOpen("pinned") ? " open" : "")}>›</span>
+              <span className="group-name"><Icon of={Pin} size="sm" /> Pinned</span>
+              <span className="group-count">{pinned.length}</span>
+            </div>
+            {sectionOpen("pinned") && pinned.map((s) => renderItem(s, "pinned"))}
           </div>
         )}
         {searchList ? (

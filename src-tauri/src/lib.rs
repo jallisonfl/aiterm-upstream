@@ -3,6 +3,7 @@ pub mod antigravity;
 pub mod cache;
 pub mod chat;
 pub mod claudecfg;
+mod codex_identity;
 pub mod detail;
 pub mod diag;
 pub mod fonts;
@@ -13,6 +14,7 @@ pub mod hooklink;
 pub mod indexer;
 pub mod launch;
 pub mod librarian;
+pub mod markdown;
 pub mod mcp;
 pub mod notify;
 pub mod opencode;
@@ -29,6 +31,7 @@ pub mod rendercost;
 pub mod services;
 pub mod sessions;
 pub mod spine;
+pub mod svg;
 pub mod tabs;
 pub mod taskbar;
 pub mod terminal;
@@ -93,6 +96,7 @@ pub fn run() {
             detail::session_transcript_path,
             changes::session_changes,
             changes::read_file_base64,
+            markdown::render_markdown,
             agents::detect_agents,
             agents::agent_caps,
             rendercost::renderer_probe,
@@ -207,6 +211,7 @@ pub fn run() {
             remote_api::remote_set_iroh,
             remote_api::remote_set_road,
             remote_api::remote_set_iroh_relay_url,
+            remote_api::remote_set_upnp,
             remote_api::remote_phone_relay_clear,
             remote_api::remote_set_road_order,
             remote_api::remote_set_port,

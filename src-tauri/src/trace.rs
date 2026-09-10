@@ -256,7 +256,7 @@ fn format_json_invoke(command: &str, value: &serde_json::Value) -> String {
             "<provider credentials redacted>".to_string()
         }
         "claude_save_layer" | "claude_set_key" => "<configuration contents redacted>".to_string(),
-        "write_text_file" => "<file contents redacted>".to_string(),
+        "write_text_file" | "render_markdown" => "<file contents redacted>".to_string(),
         "opencode_dispatch" => "<prompt contents redacted>".to_string(),
         "desktop_notify" | "tray_alerts" => {
             "<terminal-derived notification contents redacted>".to_string()
