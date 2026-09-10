@@ -27,7 +27,12 @@ data class Desktop(
      *  "Use desktop's order" in Settings clears this. Entries stored
      *  before the flag existed follow the desktop. */
     val roadOrderCustom: Boolean = false,
+    /** What the person calls this desktop, on this phone. `name` is what
+     *  the desktop calls itself and follows it; this one is theirs. */
+    val friendlyName: String = "",
 ) {
+    /** The name to show: the person's, else the desktop's own. */
+    val label: String get() = friendlyName.ifBlank { name }
     /** The address that answered last, then the rest in the QR's order. */
     val ordered: List<String> get() = listOf(baseUrl) + candidates.filter { it != baseUrl }
     /** The relay dial, or null when no route is enrolled. */

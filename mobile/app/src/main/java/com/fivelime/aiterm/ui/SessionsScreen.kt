@@ -46,6 +46,10 @@ import androidx.compose.material3.TextFieldDefaults
 import com.fivelime.aiterm.SessionState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -109,13 +113,7 @@ fun SessionsScreen(vm: AppViewModel, outer: PaddingValues) {
                 navigationIcon = {
                     IconButton(onClick = { scope.launch { drawer.open() } }) { Icon(Icons.Filled.Menu, "Menu") }
                 },
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Dot(if (vm.connected) Green else Muted)
-                        Spacer(Modifier.width(10.dp))
-                        Text(vm.desktop?.name ?: "Desktop")
-                    }
-                },
+                title = { DesktopSwitcher(vm) },
                 actions = {
                     // A blank shell on the desktop, like the home launcher's —
                     // driven from here.
@@ -239,7 +237,7 @@ private fun AppDrawer(vm: AppViewModel, close: () -> Unit) {
                 Dot(if (vm.connected) Green else Muted)
                 Spacer(Modifier.width(10.dp))
                 Column {
-                    Text(vm.desktop?.name ?: "Desktop", style = MaterialTheme.typography.titleLarge)
+                    Text(vm.desktop?.label ?: "Desktop", style = MaterialTheme.typography.titleLarge)
                     Text(if (vm.connected) "connected" else "connecting…", style = MaterialTheme.typography.labelSmall, color = Muted)
                 }
                 Spacer(Modifier.weight(1f))
@@ -256,7 +254,7 @@ private fun AppDrawer(vm: AppViewModel, close: () -> Unit) {
                 vm.desktops.forEach { d ->
                     val active = d.fingerprint == vm.desktop?.fingerprint
                     NavigationDrawerItem(
-                        label = { Text(d.name, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal) },
+                        label = { Text(d.label, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal) },
                         icon = {
                             Dot(
                                 if (active) { if (vm.connected) Green else Muted }
@@ -562,6 +560,85 @@ private fun UsageAmountRow(am: UsageAmount) {
         Text(
             (if (am.currency == "USD") "$" else "") + "%.2f".format(am.amount) + (am.of?.let { " of %.0f".format(it) } ?: ""),
             style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+/** The desktop's name in the top bar is the switcher: tap it for every
+ *  paired desktop, each with its status dot, the shown one checked; a
+ *  rename and "Add a desktop" sit under them. Switching keeps you on this
+ *  screen — the list simply becomes the other desktop's. */
+@Composable
+private fun DesktopSwitcher(vm: AppViewModel) {
+    var open by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
+    val current = vm.desktop
+    // Fresh dots for the other desktops each time the menu opens.
+    LaunchedEffect(open) { if (open) vm.checkDesktops() }
+    Box {
+        Row(
+            Modifier.clickable { open = !open }.padding(top = 6.dp, bottom = 6.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Dot(if (vm.connected) Green else Muted)
+            Spacer(Modifier.width(10.dp))
+            Text(current?.label ?: "Desktop", maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                "Switch desktop", tint = Muted, modifier = Modifier.size(18.dp),
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            vm.desktops.forEach { d ->
+                val active = d.fingerprint == current?.fingerprint
+                DropdownMenuItem(
+                    leadingIcon = {
+                        Dot(
+                            if (active) { if (vm.connected) Green else Muted }
+                            else when (vm.reachable[d.fingerprint]) { true -> Green; false -> Surface1; null -> Muted },
+                        )
+                    },
+                    text = {
+                        Column {
+                            Text(d.label, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (d.friendlyName.isNotBlank() && d.friendlyName != d.name)
+                                Text(d.name, style = MaterialTheme.typography.labelSmall, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    },
+                    trailingIcon = { if (active) Icon(Icons.Filled.Check, "Shown now", tint = Accent, modifier = Modifier.size(18.dp)) },
+                    onClick = { open = false; if (!active) vm.switchTo(d) },
+                )
+            }
+            HorizontalDivider(Modifier.padding(vertical = 4.dp), color = Surface1)
+            if (current != null) DropdownMenuItem(
+                text = { Text("Rename this desktop") },
+                onClick = { open = false; renaming = true },
+            )
+            DropdownMenuItem(
+                text = { Text("Add a desktop") },
+                onClick = { open = false; vm.showPair = true },
+            )
+        }
+    }
+    if (renaming && current != null) {
+        var name by remember(current.fingerprint) { mutableStateOf(current.friendlyName) }
+        AlertDialog(
+            onDismissRequest = { renaming = false },
+            title = { Text("Rename this desktop") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = name, onValueChange = { name = it.take(64) }, singleLine = true,
+                        placeholder = { Text(current.name, color = Muted) },
+                        label = { Text("Name on this phone") },
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text("Blank goes back to the desktop's own name: " + current.name, style = MaterialTheme.typography.labelSmall, color = Muted)
+                }
+            },
+            confirmButton = { TextButton(onClick = { vm.renameDesktop(current, name); renaming = false }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { renaming = false }) { Text("Cancel") } },
         )
     }
 }

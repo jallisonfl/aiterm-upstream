@@ -422,6 +422,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         connect()
     }
 
+    /** Call a paired desktop what you like. Blank goes back to the name the
+     *  desktop gives itself. Kept on this phone only. */
+    fun renameDesktop(d: Desktop, friendly: String) {
+        val clean = friendly.trim().filterNot { it.isISOControl() }.take(64)
+        desktops = desktops.map { if (it.fingerprint == d.fingerprint) it.copy(friendlyName = clean) else it }
+        if (desktop?.fingerprint == d.fingerprint) desktop = desktops.find { it.fingerprint == d.fingerprint }
+        store.saveAll(desktops)
+    }
+
     /** Show another paired desktop. Everything cached belongs to the old
      *  one, so it all goes; the connect re-reads the new one's truth. */
     fun switchTo(d: Desktop) {
