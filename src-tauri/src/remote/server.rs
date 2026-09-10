@@ -41,6 +41,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
+use tauri::Manager;
 
 const CERT_FILE: &str = "gateway-cert.der";
 const KEY_FILE: &str = "gateway-key.der";
@@ -1396,6 +1397,52 @@ struct SessionConversationRequest {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct SessionSpineRequest {
+    session_id: String,
+    #[serde(default)]
+    after: u64,
+}
+
+#[derive(Serialize)]
+struct SpineChanged {
+    session_id: String,
+    epoch: u64,
+    latest_seq: u64,
+}
+
+struct SpineSubscription {
+    session_id: String,
+    notified: u64,
+}
+
+impl SpineSubscription {
+    fn changed(&mut self, spine: &crate::spine::Spine) -> Option<SpineChanged> {
+        let latest_seq = spine.latest_seq(&self.session_id);
+        if latest_seq == self.notified {
+            return None;
+        }
+        self.notified = latest_seq;
+        Some(SpineChanged {
+            session_id: self.session_id.clone(),
+            epoch: spine.epoch(),
+            latest_seq,
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct SessionSpinePayload {
+    epoch: u64,
+    live: bool,
+    has_more: bool,
+    oldest_seq: u64,
+    latest_seq: u64,
+    turn_open: Option<bool>,
+    events: Vec<crate::spine::SpineEvent>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SessionWebPreviewRequest {
     session_id: String,
     open: bool,
@@ -1419,6 +1466,27 @@ const MAX_CONVERSATION_MESSAGES: usize = 512;
 const MAX_CONVERSATION_MESSAGE_BYTES: usize = 64 * 1024;
 const CONVERSATION_OMISSION: &str = "[… earlier turns omitted for phone view …]";
 const CONVERSATION_TRUNCATION: &str = "\n[… message truncated for phone view …]";
+const MAX_SPINE_TEXT_BYTES: usize = 512 * 1024;
+
+fn bound_remote_spine_event(mut event: crate::spine::SpineEvent) -> crate::spine::SpineEvent {
+    let text = match &mut event.kind {
+        crate::spine::Kind::UserMessage { text, .. }
+        | crate::spine::Kind::AgentText { text, .. }
+        | crate::spine::Kind::AgentThought { text, .. } => Some(text),
+        _ => None,
+    };
+    if let Some(text) = text {
+        if text.len() > MAX_SPINE_TEXT_BYTES {
+            let mut end = MAX_SPINE_TEXT_BYTES - CONVERSATION_TRUNCATION.len();
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+            text.push_str(CONVERSATION_TRUNCATION);
+        }
+    }
+    event
+}
 
 /// Shape only the remote phone conversation response to the limits enforced
 /// by the Android decoder. The shared transcript parser and every desktop
@@ -2697,6 +2765,33 @@ impl RemoteServices {
                     request_id,
                     "session.conversation",
                     &SessionConversationPayload { messages },
+                )?]))
+            }
+            "session.spine" | "session.spine.subscribe" => {
+                let payload: SessionSpineRequest = decode_payload(request)?;
+                self.sessions
+                    .find(&payload.session_id)
+                    .map_err(|error| error.code())?;
+                let app = self.app.as_ref().ok_or("remote.unsupported")?;
+                crate::spine::ensure_tail_for(app, &payload.session_id);
+                let spine = app
+                    .try_state::<Arc<crate::spine::Spine>>()
+                    .ok_or("remote.unsupported")?;
+                let (has_more, oldest_seq, latest_seq, turn_open, events) =
+                    spine.page_after(&payload.session_id, payload.after, 700 * 1024);
+                let events = events.into_iter().map(bound_remote_spine_event).collect();
+                Ok(DispatchOutcome::frames(vec![response(
+                    request_id,
+                    request.kind(),
+                    &SessionSpinePayload {
+                        epoch: spine.epoch(),
+                        live: spine.is_live(&payload.session_id),
+                        has_more,
+                        oldest_seq,
+                        latest_seq,
+                        turn_open,
+                        events,
+                    },
                 )?]))
             }
             "session.changes" => {
@@ -4544,6 +4639,15 @@ async fn run_authenticated_socket(
     let mut attachments = HashMap::<AttachmentId, ConnectionAttachment>::new();
     let upload_set = upload_lease.set.clone();
     let registry_events = services.registry.subscribe_changes();
+    // Explicit opt-in keeps old phones from receiving an unknown event.
+    // Only the selected conversation is subscribed, bounded to one per socket.
+    let mut spine_subscription: Option<SpineSubscription> = None;
+    let spine = services.app.as_ref().and_then(|app| {
+        app.try_state::<Arc<crate::spine::Spine>>()
+            .map(|s| s.inner().clone())
+    });
+    let mut spine_tick = tokio::time::interval(Duration::from_millis(100));
+    spine_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut closed_attachments = ClosedAttachments::default();
     let (attachment_completed, mut completed_attachments) =
         tokio::sync::mpsc::channel(MAX_ATTACHMENTS_PER_CONNECTION);
@@ -4583,6 +4687,15 @@ async fn run_authenticated_socket(
                             let transfers = attachment.transfers.clone();
                             shutdown_attachment(attachment).await;
                             closed_attachments.insert(id, tab_id, lifecycle, transfers);
+                        }
+                    }
+                    continue;
+                }
+                _ = spine_tick.tick(), if spine_subscription.is_some() => {
+                    if let (Some(subscription), Some(spine)) = (&mut spine_subscription, &spine) {
+                        if let Some(changed) = subscription.changed(spine) {
+                            let Ok(event) = response(0, "session.spine.changed", &changed) else { break; };
+                            if enqueue_event(&outbound, event).await.is_err() { break; }
                         }
                     }
                     continue;
@@ -4751,6 +4864,18 @@ async fn run_authenticated_socket(
                     tab_id,
                     sequenced,
                 } = outcome;
+                if request.kind() == "session.spine.subscribe"
+                    && frames
+                        .iter()
+                        .any(|frame| frame.kind == "session.spine.subscribe")
+                {
+                    if let Ok(payload) = decode_payload::<SessionSpineRequest>(&request) {
+                        spine_subscription = Some(SpineSubscription {
+                            session_id: payload.session_id,
+                            notified: payload.after,
+                        });
+                    }
+                }
                 match sequenced {
                     Some(SequencedAction::Resume {
                         request_id,
@@ -5018,6 +5143,49 @@ async fn reap_finished_attachments(
 
 #[cfg(test)]
 mod request_guard_tests {
+    #[test]
+    fn spine_notifications_coalesce_and_only_follow_the_selected_session() {
+        let spine = crate::spine::Spine::new();
+        let mut subscription = super::SpineSubscription {
+            session_id: "s".into(),
+            notified: 0,
+        };
+        assert!(subscription.changed(&spine).is_none());
+        spine.push(
+            "other",
+            "codex",
+            1,
+            crate::spine::Kind::TurnStarted { turn: "t".into() },
+        );
+        assert!(subscription.changed(&spine).is_none());
+        for n in 1..=100 {
+            spine.push(
+                "s",
+                "codex",
+                n,
+                crate::spine::Kind::AgentText {
+                    id: "a".into(),
+                    text: n.to_string(),
+                    done: false,
+                },
+            );
+        }
+        let notice = subscription.changed(&spine).unwrap();
+        assert_eq!(notice.latest_seq, 100);
+        assert_eq!(notice.epoch, spine.epoch());
+        assert!(subscription.changed(&spine).is_none());
+        spine.push(
+            "s",
+            "codex",
+            101,
+            crate::spine::Kind::TurnEnded {
+                turn: "t".into(),
+                reason: "completed".into(),
+            },
+        );
+        assert_eq!(subscription.changed(&spine).unwrap().latest_seq, 101);
+    }
+
     use super::*;
     use crate::terminal::model::{CursorState, ScreenSnapshot, TerminalModes};
     use std::sync::atomic::{AtomicBool, AtomicUsize};
