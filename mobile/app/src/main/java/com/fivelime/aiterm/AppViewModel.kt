@@ -1223,6 +1223,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) { notice = describe(e) } finally { uploading = false }
         }
     }
+
+    /** Bytes the app already holds — a screenshot of itself — sent the same
+     *  way a picked file is. */
+    fun attachBytes(name: String, bytes: ByteArray) {
+        val a = api ?: return
+        viewModelScope.launch {
+            uploading = true
+            try {
+                if (bytes.isEmpty()) { notice = "Nothing to attach"; return@launch }
+                if (bytes.size > 25 * 1024 * 1024) { notice = "25 MB at most"; return@launch }
+                attachments = attachments + a.upload(name, bytes)
+            } catch (e: Exception) { notice = describe(e) } finally { uploading = false }
+        }
+    }
     fun removeAttachment(att: Attachment) { attachments = attachments - att }
 
     /** What actually goes to the agent: the text, then the files by path. */
