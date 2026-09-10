@@ -6,12 +6,13 @@ import { parseOsc9, TermProgress } from "../osc9";
 import { Channel } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
-  AttachmentId, TabId, tabAttachDesktop, tabDetach, tabList, tabResize, tabTakeFocus, tabWrite,
+  AttachmentId, TabId, openPath, tabAttachDesktop, tabDetach, tabList, tabResize, tabTakeFocus, tabWrite,
 } from "../ipc";
 import { boldWeightFor } from "../settings";
 import { createTabExitCatchUp } from "../tabModel";
 import { TerminalInputLine } from "../terminalInput";
 import { projectTerminalGrid } from "../terminalSizing";
+import { terminalLinkHandler } from "../terminalLinks";
 import "@xterm/xterm/css/xterm.css";
 
 /** Attach the GPU WebGL renderer. It owns its own surface and clears+repaints
@@ -152,6 +153,7 @@ interface Props {
    * deliberately narrow: lifecycle watchers may use an explicit command as
    * evidence, but never inspect ordinary prompt text. */
   onLineSubmit: (key: TabId, line: string) => void;
+  onOpenFile: (path: string) => void;
   /** Focus the terminal when it becomes active. Once true only while the
    *  composer was hidden, back when the composer held a text input that would
    *  have been fighting for the same keystrokes. It is a pill strip now, so
@@ -170,13 +172,15 @@ interface Props {
 
 export default function TerminalView({
   tab, active, onExit, onRegister, onActivity, onAttention, onNotify, onProgress,
-  onLineSubmit, autoFocus, fontSize, fontFamily, lineHeight, fontWeight, renderer, theme,
+  onLineSubmit, onOpenFile, autoFocus, fontSize, fontFamily, lineHeight, fontWeight, renderer, theme,
 }: Props) {
   const elRef = useRef<HTMLDivElement>(null);
   const started = useRef(false);
   const fitRef = useRef<FitAddon | null>(null);
   const attachmentIdRef = useRef<AttachmentId | null>(null);
   const termRef = useRef<Terminal | null>(null);
+  const openFileRef = useRef(onOpenFile);
+  openFileRef.current = onOpenFile;
   const activeRef = useRef(active);
   activeRef.current = active;
   const focusRef = useRef(tab.focus ?? "desktop");
@@ -215,6 +219,10 @@ export default function TerminalView({
     started.current = true;
 
     const term = new Terminal({
+      linkHandler: terminalLinkHandler(
+        path => openFileRef.current(path),
+        url => { void openPath(url).catch(console.error); },
+      ),
       fontFamily,
       fontSize,
       // Both settable, because the right answer depends on the font, the

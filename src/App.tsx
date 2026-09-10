@@ -3009,6 +3009,7 @@ export default function App() {
                 onNotify={noteNotify}
                 onProgress={noteProgress}
                 onLineSubmit={noteLineSubmit}
+                onOpenFile={openFileTab}
                 autoFocus
                 fontSize={termFont}
                 fontFamily={xtermFont}
