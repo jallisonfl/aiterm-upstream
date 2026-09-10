@@ -1438,7 +1438,10 @@ export default function App() {
         } catch {
           // The newly-created rollout can appear after the first poll. Keep
           // the explicit intent and try again; ambiguity remains a safe no-op.
-          if (clearIntents.current.get(key) === intent) intent.inFlight = false;
+        } finally {
+          // An effect restart can cancel a lookup while a different tab clears.
+          // The replacement effect must be able to retry that same intent.
+          intent.inFlight = false;
         }
       }
     };

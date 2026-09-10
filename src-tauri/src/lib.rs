@@ -3,6 +3,7 @@ pub mod antigravity;
 pub mod cache;
 pub mod chat;
 pub mod claudecfg;
+mod codex_identity;
 pub mod detail;
 pub mod diag;
 pub mod fonts;

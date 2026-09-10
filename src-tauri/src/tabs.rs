@@ -1490,11 +1490,30 @@ impl TabRegistry {
     }
 
     pub fn update(&self, id: &TabId, update: TabUpdate) -> Result<TabDescriptor, TabError> {
+        self.update_guarded(id, update, None)
+    }
+
+    fn update_guarded(
+        &self,
+        id: &TabId,
+        update: TabUpdate,
+        expected: Option<&TabDescriptor>,
+    ) -> Result<TabDescriptor, TabError> {
         let tab = self.inner.tab(id)?;
         let _output_order = tab.raw.send_order.lock().unwrap();
         tab.raw.require_open()?;
         let descriptor = {
             let mut live = tab.live.lock().unwrap();
+            if expected.is_some_and(|previous| {
+                previous.session_id != live.descriptor.session_id
+                    || previous.slot_id != live.descriptor.slot_id
+                    || previous.agent_id != live.descriptor.agent_id
+            }) {
+                return Err(TabError::new(
+                    "tab.identity_changed",
+                    "tab identity changed during lookup",
+                ));
+            }
             if live.descriptor.state != TabState::Running {
                 return Err(TabError::new("tab.closed", "the tab has exited"));
             }
@@ -1551,6 +1570,42 @@ impl TabRegistry {
             descriptor
         };
         Ok(descriptor)
+    }
+
+    /// Reconcile against the conversation actually held open by the PTY process.
+    /// No terminal keystroke inference: this also repairs missed clears, command
+    /// completion and input from remote attachments. Filesystem work is outside
+    /// registry locks, and a changed binding invalidates its result.
+    fn refresh_codex_sessions(&self, resolve: impl Fn(u32) -> Option<String>) {
+        for previous in self.list() {
+            if previous.state != TabState::Running || previous.agent_id.as_deref() != Some("codex")
+            {
+                continue;
+            }
+            let Ok(tab) = self.inner.tab(&previous.id) else {
+                continue;
+            };
+            let pty = tab.live.lock().unwrap().live_pty().ok();
+            let Some(pid) = pty.and_then(|id| self.inner.backend.child_pid(id)) else {
+                continue;
+            };
+            let Some(session_id) = resolve(pid) else {
+                continue;
+            };
+            if previous.session_id.as_deref() == Some(session_id.as_str())
+                && previous.slot_id == session_id
+            {
+                continue;
+            }
+            let _ = self.update_guarded(
+                &previous.id,
+                TabUpdate::new()
+                    .session_id(session_id.clone())
+                    .slot_id(session_id)
+                    .fresh(false),
+                Some(&previous),
+            );
+        }
     }
 
     pub fn rekey_session(
@@ -1851,7 +1906,10 @@ impl TabRegistry {
         self.cells().into_iter().find(|tab| {
             let live = tab.live.lock().unwrap();
             live.descriptor.state == TabState::Running
-                && live.descriptor.session_id.as_deref() == Some(session_id)
+                && (live.descriptor.session_id.as_deref() == Some(session_id)
+                    || (live.descriptor.session_id.is_none()
+                        && live.descriptor.resumed_id.as_deref() == Some(session_id))
+                    || live.descriptor.slot_id == session_id)
         })
     }
 
@@ -2092,6 +2150,20 @@ pub fn start_desktop_registry_bridge(
     app: AppHandle,
     registry: Arc<TabRegistry>,
 ) -> Result<(), String> {
+    // Keep identity discovery off the UI, PTY input and registry-event threads.
+    // Weak ownership lets this worker stop when the application registry closes.
+    let identity_registry = Arc::downgrade(&registry);
+    std::thread::Builder::new()
+        .name("codex-session-identity".to_string())
+        .spawn(move || loop {
+            let Some(registry) = identity_registry.upgrade() else {
+                break;
+            };
+            registry.refresh_codex_sessions(crate::codex_identity::resolve);
+            drop(registry);
+            std::thread::sleep(Duration::from_secs(2));
+        })
+        .map_err(|error| error.to_string())?;
     let changes = registry.subscribe_changes();
     let activity = registry.subscribe_activity();
     std::thread::Builder::new()
@@ -3103,6 +3175,65 @@ fn flush_replies(registry: &RegistryInner, tab: &Arc<TabCell>, pty_id: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct IdentityBackend;
+    impl PtyBackend for IdentityBackend {
+        fn spawn(&self, _: PtySpawnSpec, _: Arc<dyn PtySink>) -> Result<u32, String> {
+            Ok(1)
+        }
+        fn write(&self, _: u32, _: &[u8]) -> Result<(), String> {
+            Ok(())
+        }
+        fn resize(&self, _: u32, _: u16, _: u16) -> Result<(), String> {
+            Ok(())
+        }
+        fn kill(&self, _: u32) {}
+        fn pty_for_descendant(&self, _: u32) -> Option<u32> {
+            None
+        }
+        fn child_pid(&self, _: u32) -> Option<u32> {
+            Some(42)
+        }
+    }
+
+    fn identity_registry() -> (TabRegistry, TabId) {
+        let registry = TabRegistry::with_backend(Arc::new(IdentityBackend));
+        let id = registry
+            .open(
+                TabLaunch::new("Codex", "old", TerminalSize::try_new(80, 24).unwrap())
+                    .with_agent_id("codex")
+                    .with_session_id("old")
+                    .with_resumed_id("old"),
+            )
+            .unwrap();
+        (registry, id)
+    }
+
+    #[test]
+    fn process_identity_repairs_a_stale_binding_without_any_clear_input() {
+        let (registry, id) = identity_registry();
+        registry.refresh_codex_sessions(|pid| {
+            assert_eq!(pid, 42);
+            Some("actual".into())
+        });
+        assert_eq!(registry.get(&id).unwrap().session_id(), Some("actual"));
+        assert_eq!(registry.get(&id).unwrap().slot_id(), "actual");
+        assert!(!registry.has_session("old"));
+        assert!(registry.has_session("actual"));
+        // Unavailable/ambiguous ownership never undoes a proven binding.
+        registry.refresh_codex_sessions(|_| None);
+        assert_eq!(registry.get(&id).unwrap().session_id(), Some("actual"));
+    }
+
+    #[test]
+    fn process_identity_does_not_overwrite_a_binding_changed_during_lookup() {
+        let (registry, id) = identity_registry();
+        registry.refresh_codex_sessions(|_| {
+            registry.rekey_session(&id, "newer").unwrap();
+            Some("stale-result".into())
+        });
+        assert_eq!(registry.get(&id).unwrap().session_id(), Some("newer"));
+    }
 
     #[test]
     fn failed_desktop_channel_send_closes_the_attachment_receiver() {

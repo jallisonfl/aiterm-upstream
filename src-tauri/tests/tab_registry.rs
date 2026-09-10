@@ -614,6 +614,59 @@ fn session_hook_rekeys_the_slot_atomically_and_releases_the_old_slot() {
 }
 
 #[test]
+fn rekeying_a_resumed_codex_tab_retires_the_old_session_identity_everywhere() {
+    let (registry, pty) = registry();
+    let id = registry
+        .open(
+            TabLaunch::new("Codex", "session-old", size(80, 24))
+                .with_agent_id("codex")
+                .with_session_id("session-old")
+                .with_resumed_id("session-old"),
+        )
+        .unwrap();
+    let original_pty = pty.last_id();
+    let remote = registry.attach(&id, AttachmentKind::Remote).unwrap();
+    let changes = registry.subscribe_changes();
+    let _initial_roster = changes.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(registry.has_session("session-old"));
+    assert!(!registry.has_session("session-new"));
+
+    let descriptor = registry.rekey_session(&id, "session-new").unwrap();
+
+    assert!(!registry.has_session("session-old"));
+    assert!(registry.has_session("session-new"));
+    assert_eq!(descriptor.id(), &id);
+    assert_eq!(descriptor.session_id(), Some("session-new"));
+    assert_eq!(descriptor.slot_id(), "session-new");
+    assert_eq!(descriptor.resumed_id(), Some("session-old"));
+    assert_eq!(registry.list(), vec![descriptor.clone()]);
+    assert_eq!(
+        registry
+            .write_session_str("session-old", "must not reach the PTY")
+            .unwrap_err(),
+        "session is not open in a tab"
+    );
+    assert!(pty.writes().is_empty());
+
+    registry
+        .write_session_str("session-new", "input for the rekeyed session")
+        .unwrap();
+    assert_eq!(
+        *pty.writes.lock().unwrap(),
+        vec![(original_pty, b"input for the rekeyed session".to_vec())]
+    );
+    assert_eq!(pty.last_id(), original_pty, "rekey must not spawn a new PTY");
+    assert!(matches!(
+        changes.recv_timeout(Duration::from_secs(1)).unwrap(),
+        TabRegistryEvent::Changed { tab, .. } if tab == descriptor
+    ));
+    assert!(matches!(
+        recv_matching(&remote.events, |event| matches!(event, TabEvent::Metadata(_))),
+        TabEvent::Metadata(tab) if tab == descriptor
+    ));
+}
+
+#[test]
 fn descendant_lookup_returns_an_opaque_tab_id_not_the_numeric_pty_id() {
     let (registry, pty) = registry();
     let id = registry.open(shell_launch("slot:descendant")).unwrap();
