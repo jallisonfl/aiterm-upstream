@@ -539,7 +539,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun connect() {
         val d = desktop ?: return
         if (connectJob?.isActive == true) return
-        ws?.cancel()
+        // Forget the old socket BEFORE cancelling it: its close callback
+        // checks `ws`, and finding it still set scheduled another connect
+        // in 3 s — which cancelled the new socket, whose close scheduled
+        // another, for as long as the app was open. One stray reconnect
+        // (Wi-Fi ↔ cellular) turned into a permanent 3-second churn, and
+        // every churn re-fetched the open session [observed 2026-09-10:
+        // desktop log, connect/disconnect every 3 s; a session over iroh
+        // never finished loading].
+        ws?.let { old -> ws = null; old.cancel() }
         connectJob = viewModelScope.launch {
             // The desktop may be on a different address than last time — home
             // Wi‑Fi, USB, Tailscale. Probe every known address at once and
@@ -617,7 +625,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 desktops = desktops.map { if (it.fingerprint == nd2.fingerprint) nd2 else it }
                 store.saveAll(desktops)
                 if (desktop?.fingerprint == nd2.fingerprint) desktop = nd2
-                ws?.cancel()
+                ws?.let { old -> ws = null; old.cancel() }
                 openEvents(Api(url, d.token, d.fingerprint))
                 return@launch
             }
@@ -635,7 +643,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // (models starred, providers added); re-read it on every connect
         // rather than trusting the first answer forever.
         viewModelScope.launch { runCatching { agents = a.agents() } }
-        ws = a.events(
+        var mine: WebSocket? = null
+        mine = a.events(
             onOpen = {
                 viewModelScope.launch {
                     connected = true
@@ -730,11 +739,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             },
             onClosed = {
                 viewModelScope.launch {
+                    // Only the socket the app still holds gets to say it
+                    // dropped. One replaced by a newer connect stays quiet.
+                    if (ws !== mine) return@launch
                     connected = false
-                    if (ws != null) scheduleRetry()
+                    ws = null
+                    scheduleRetry()
                 }
             },
         )
+        ws = mine
     }
 
     private fun disconnect() {
@@ -1041,9 +1055,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // HISTORY as blank [observed 2026-08-31]. Retry, briefly.
             for (attempt in 1..3) {
                 try {
-                    val r = api?.spine(s.id, 0) ?: break
+                    val a = api ?: break
+                    var r = a.spine(s.id, 0)
                     if (myGen != selectGen) return@launch
-                    spine.replay(r); publishSpine()
+                    var advanced = spine.replay(r); publishSpine()
+                    // A long session comes in pages; the spinner is off after
+                    // the first, and the rest land behind it.
+                    loadingTurns = false
+                    var pages = 0
+                    while (r.hasMore && advanced && pages++ < MAX_CATCH_UP_PAGES) {
+                        r = a.spine(s.id, spine.lastSeq)
+                        if (myGen != selectGen) return@launch
+                        advanced = spine.replay(r); publishSpine()
+                    }
                     Diag.log("spine", "${s.id.take(8)} replay ${r.events.size} events live=${r.live} -> ${spine.items.size} rows, phase=${spine.phase} (try $attempt)")
                     lastSpineAt = System.currentTimeMillis()
                     break
