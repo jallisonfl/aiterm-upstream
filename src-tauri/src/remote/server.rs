@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -1457,6 +1457,30 @@ struct FileReadRequest {
     count: u32,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MarkdownParseRequest {
+    source: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MarkdownWriteRequest {
+    session_id: String,
+    path: String,
+    content: String,
+    #[serde(with = "serde_bytes")]
+    expected_sha256: Vec<u8>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SvgRenderRequest {
+    session_id: String,
+    path: String,
+    max_edge: u32,
+}
+
 fn default_conversation_chars() -> usize {
     512 * 1024
 }
@@ -1614,6 +1638,20 @@ struct FileReadPayload {
     offset: u64,
     total: u64,
     eof: bool,
+    #[serde(with = "serde_bytes")]
+    data: Vec<u8>,
+}
+
+#[derive(Debug, Serialize)]
+struct MarkdownWritePayload {
+    path: String,
+    #[serde(with = "serde_bytes")]
+    sha256: Vec<u8>,
+}
+
+#[derive(Serialize)]
+struct SvgRenderPayload {
+    mime: &'static str,
     #[serde(with = "serde_bytes")]
     data: Vec<u8>,
 }
@@ -2091,6 +2129,128 @@ fn read_file_chunk_from_ledger(
         eof: next == metadata.len(),
         data,
     })
+}
+
+fn is_authorized_live_file(path: &str, changes: &[crate::changes::Change]) -> bool {
+    changes
+        .iter()
+        .any(|change| change.kind != "deleted" && change.path == path)
+}
+
+fn open_authorized_file(
+    path: &str,
+    changes: &[crate::changes::Change],
+) -> Result<std::fs::File, &'static str> {
+    if !is_authorized_live_file(path, changes) {
+        return Err("file.not_found");
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let file = options.open(path).map_err(|_| "file.not_found")?;
+    if !file.metadata().map_err(|_| "file.not_found")?.is_file() {
+        return Err("file.not_found");
+    }
+    Ok(file)
+}
+
+fn read_bounded_authorized_file(
+    path: &str,
+    changes: &[crate::changes::Change],
+    limit: usize,
+) -> Result<Vec<u8>, &'static str> {
+    let file = open_authorized_file(path, changes)?;
+    if file.metadata().map_err(|_| "file.not_found")?.len() > limit as u64 {
+        return Err("file.too_large");
+    }
+    let mut data = Vec::new();
+    file.take((limit + 1) as u64)
+        .read_to_end(&mut data)
+        .map_err(|_| "file.read_failed")?;
+    if data.len() > limit {
+        return Err("file.too_large");
+    }
+    Ok(data)
+}
+
+fn is_markdown_path(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str(),
+        "md" | "markdown" | "mdx"
+    )
+}
+
+fn write_authorized_markdown(
+    request: MarkdownWriteRequest,
+    changes: &[crate::changes::Change],
+) -> Result<MarkdownWritePayload, &'static str> {
+    if !is_markdown_path(Path::new(&request.path))
+        || request.content.len() > crate::markdown::MAX_MARKDOWN_BYTES
+        || request.expected_sha256.len() != 32
+    {
+        return Err("protocol.invalid_payload");
+    }
+    let before =
+        read_bounded_authorized_file(&request.path, changes, crate::markdown::MAX_MARKDOWN_BYTES)?;
+    if &Sha256::digest(&before)[..] != request.expected_sha256.as_slice() {
+        return Err("file.changed_on_disk");
+    }
+
+    let path = PathBuf::from(&request.path);
+    let parent = path.parent().ok_or("file.write_failed")?;
+    let name = path
+        .file_name()
+        .ok_or("file.write_failed")?
+        .to_string_lossy();
+    let temporary = parent.join(format!(".{name}.aiterm-{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        }
+        let mut output = options.open(&temporary).map_err(|_| "file.write_failed")?;
+        output
+            .write_all(request.content.as_bytes())
+            .map_err(|_| "file.write_failed")?;
+        output.sync_all().map_err(|_| "file.write_failed")?;
+
+        // Check again immediately before replacement. This catches the normal agent-write race
+        // while keeping the final operation atomic for every reader.
+        let current = read_bounded_authorized_file(
+            &request.path,
+            changes,
+            crate::markdown::MAX_MARKDOWN_BYTES,
+        )?;
+        if &Sha256::digest(&current)[..] != request.expected_sha256.as_slice() {
+            return Err("file.changed_on_disk");
+        }
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            let _ = std::fs::set_permissions(&temporary, metadata.permissions());
+        }
+        std::fs::rename(&temporary, &path).map_err(|_| "file.write_failed")?;
+        let sha256 = Sha256::digest(request.content.as_bytes()).to_vec();
+        Ok(MarkdownWritePayload {
+            path: request.path,
+            sha256,
+        })
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn file_mime(path: &Path) -> &'static str {
@@ -2841,6 +3001,58 @@ impl RemoteServices {
                     request_id,
                     "file.read",
                     &chunk,
+                )?]))
+            }
+            "markdown.parse" => {
+                let payload: MarkdownParseRequest = decode_payload(request)?;
+                let document = crate::markdown::parse(&payload.source)?;
+                Ok(DispatchOutcome::frames(vec![response(
+                    request_id,
+                    "markdown.parse",
+                    &document,
+                )?]))
+            }
+            "file.write_markdown" => {
+                let payload: MarkdownWriteRequest = decode_payload(request)?;
+                bounded(&payload.path, MAX_PATH_BYTES)?;
+                let session = self
+                    .sessions
+                    .find(&payload.session_id)
+                    .map_err(|error| error.code())?;
+                let app = self.app.as_ref().ok_or("remote.unsupported")?;
+                let changes = crate::changes::produced_files(app, &session);
+                let saved = write_authorized_markdown(payload, &changes)?;
+                Ok(DispatchOutcome::frames(vec![response(
+                    request_id,
+                    "file.write_markdown",
+                    &saved,
+                )?]))
+            }
+            "file.render_svg" => {
+                let payload: SvgRenderRequest = decode_payload(request)?;
+                bounded(&payload.path, MAX_PATH_BYTES)?;
+                let session = self
+                    .sessions
+                    .find(&payload.session_id)
+                    .map_err(|error| error.code())?;
+                let app = self.app.as_ref().ok_or("remote.unsupported")?;
+                let changes = crate::changes::produced_files(app, &session);
+                if !payload.path.to_ascii_lowercase().ends_with(".svg") {
+                    return Err("protocol.invalid_payload");
+                }
+                let source = read_bounded_authorized_file(
+                    &payload.path,
+                    &changes,
+                    crate::svg::MAX_SVG_BYTES,
+                )?;
+                let data = crate::svg::render_png(&source, payload.max_edge)?;
+                Ok(DispatchOutcome::frames(vec![response(
+                    request_id,
+                    "file.render_svg",
+                    &SvgRenderPayload {
+                        mime: "image/png",
+                        data,
+                    },
                 )?]))
             }
             "session.open" => {
@@ -5369,6 +5581,58 @@ mod request_guard_tests {
             .unwrap_err(),
             "protocol.invalid_payload",
         );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn markdown_writes_are_authorized_atomic_and_conflict_checked() {
+        let root =
+            std::env::temp_dir().join(format!("aiterm-markdown-write-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("notes.md");
+        std::fs::write(&path, b"# Before\n").unwrap();
+        let changes = vec![recorded_change(&path, "created")];
+        let expected = Sha256::digest(b"# Before\n").to_vec();
+        let request = |content: &str, hash: Vec<u8>| MarkdownWriteRequest {
+            session_id: "session-1".into(),
+            path: path.to_string_lossy().into_owned(),
+            content: content.into(),
+            expected_sha256: hash,
+        };
+
+        let saved =
+            write_authorized_markdown(request("# After\n", expected.clone()), &changes).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# After\n");
+        assert_eq!(saved.sha256, Sha256::digest(b"# After\n").to_vec());
+        assert_eq!(
+            write_authorized_markdown(request("stale", expected), &changes).unwrap_err(),
+            "file.changed_on_disk",
+        );
+        assert!(!std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().contains(".aiterm-")));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn markdown_write_cannot_expand_file_authority() {
+        let root =
+            std::env::temp_dir().join(format!("aiterm-markdown-deny-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("secret.md");
+        std::fs::write(&path, b"secret").unwrap();
+        let request = MarkdownWriteRequest {
+            session_id: "session-1".into(),
+            path: path.to_string_lossy().into_owned(),
+            content: "changed".into(),
+            expected_sha256: Sha256::digest(b"secret").to_vec(),
+        };
+        assert_eq!(
+            write_authorized_markdown(request, &[]).unwrap_err(),
+            "file.not_found"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "secret");
         std::fs::remove_dir_all(root).ok();
     }
 

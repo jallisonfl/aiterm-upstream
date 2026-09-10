@@ -29,6 +29,8 @@ ciborium = "0.2"
 p256 = { version = "0.13", features = ["ecdsa"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 sha2 = "0.10"
+comrak = { version = "0.54", default-features = false }
+resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts"] }
 base64 = "0.22"
 subtle = "2.6"
 axum = { version = "0.8", features = ["ws"] }

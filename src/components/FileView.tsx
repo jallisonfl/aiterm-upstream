@@ -6,10 +6,8 @@ import { indentWithTab } from "@codemirror/commands";
 import { LanguageDescription, syntaxHighlighting } from "@codemirror/language";
 import { classHighlighter } from "@lezer/highlight";
 import { languages } from "@codemirror/language-data";
-import { homeAbbrev, openPath, readTextFile, writeTextFile } from "../ipc";
+import { homeAbbrev, openPath, readTextFile, renderMarkdown, writeTextFile } from "../ipc";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 import Icon from "./Icon";
 import { Code, Eye } from "lucide-react";
 
@@ -60,14 +58,6 @@ function saveHtmlMode(m: FileMode) {
   try { localStorage.setItem(HTML_MODE_KEY, m); } catch { /* private mode */ }
 }
 
-/** Markdown → HTML the page can show. GFM (tables, task lists, strike), and
- *  sanitised — a file under a project is exactly the kind of thing an agent
- *  writes, so its HTML is not trusted with the window. */
-function renderMarkdown(src: string): string {
-  const html = marked.parse(src, { gfm: true, breaks: false, async: false }) as string;
-  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true }, ADD_ATTR: ["target"] });
-}
-
 /**
  * A file open in a center tab — CodeMirror over the real file on disk.
  *
@@ -116,6 +106,8 @@ export default function FileView({
   const [mode, setModeState] = useState<FileMode>(() => (md ? loadMarkdownMode() : html ? loadHtmlMode() : "code"));
   const modeRef = useRef(mode);
   const [previewHtml, setPreviewHtml] = useState("");
+  const [previewErr, setPreviewErr] = useState<string | null>(null);
+  const previewSequence = useRef(0);
   /** Bumped whenever the disk moved (save, watcher reload), so the page
    *  iframe re-fetches — its src carries the nonce as a cache-buster. */
   const [pageNonce, setPageNonce] = useState(0);
@@ -123,7 +115,18 @@ export default function FileView({
     if (isHtml(path)) { setPageNonce((n) => n + 1); return; }
     const view = viewRef.current;
     if (!view) return;
-    setPreviewHtml(renderMarkdown(view.state.doc.toString()));
+    const sequence = ++previewSequence.current;
+    renderMarkdown(view.state.doc.toString()).then(
+      (rendered) => {
+        if (sequence !== previewSequence.current) return;
+        setPreviewHtml(rendered);
+        setPreviewErr(null);
+      },
+      (error) => {
+        if (sequence !== previewSequence.current) return;
+        setPreviewErr(String(error));
+      },
+    );
   }, [path]);
   const setMode = useCallback((m: FileMode) => {
     modeRef.current = m;
@@ -383,13 +386,14 @@ export default function FileView({
               src={convertFileSrc(path) + "?v=" + pageNonce}
             />
           ) : (
-            <div
-              className="md-preview"
-              onClick={onPreviewClick}
-              onDoubleClick={() => setMode("code")}
-              title="Double-click to edit"
-              dangerouslySetInnerHTML={{ __html: previewHtml }}
-            />
+            previewErr ? <div className="empty-note">Can't render Markdown: {previewErr}</div> :
+              <div
+                className="md-preview"
+                onClick={onPreviewClick}
+                onDoubleClick={() => setMode("code")}
+                title="Double-click to edit"
+                dangerouslySetInnerHTML={{ __html: previewHtml }}
+              />
           ))}
         </>
       )}

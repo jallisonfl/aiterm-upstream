@@ -447,6 +447,9 @@ export interface TextFile {
 
 export const readTextFile = (path: string) =>
   invoke<TextFile>("read_text_file", { path });
+/** Render GFM with the desktop's Rust parser. Raw HTML is suppressed there. */
+export const renderMarkdown = (source: string) =>
+  invoke<string>("render_markdown", { source });
 /** Returns the new mtime. Rejects with "changed-on-disk" when the file moved
  *  past `expectedMtimeMs`; pass null to overwrite deliberately. */
 export const writeTextFile = (
