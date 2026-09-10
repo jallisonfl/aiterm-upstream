@@ -4,6 +4,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -208,5 +209,28 @@ class SpineTest {
         st.legacy(listOf(Turn("user", "hi"), Turn("assistant", "one moment — done")))
         assertEquals(listOf("legacy-0", "legacy-1"), st.items.map { it.key })
         assertEquals("one moment — done", (st.items[1] as Item.AgentText).text)
+    }
+
+    @Test fun `a page carries has_more and the bounds, and old desktops read as one page`() {
+        val paged = SpineResponse.parse(Json.parseToJsonElement(
+            """{"epoch":7,"live":true,"has_more":true,"oldest_seq":3,"latest_seq":40,"events":[]}"""
+        ).jsonObject)
+        assertTrue(paged.hasMore); assertEquals(3L, paged.oldestSeq); assertEquals(40L, paged.latestSeq)
+        val plain = SpineResponse.parse(Json.parseToJsonElement("""{"epoch":7,"events":[]}""").jsonObject)
+        assertFalse(plain.hasMore); assertEquals(0L, plain.oldestSeq)
+    }
+
+    @Test fun `a cursor that fell off the ring starts over from the page`() {
+        val store = ConversationStore()
+        store.replay(SpineResponse(7, true, listOf(ev(1, """"kind":"agent_text","id":"m1","text":"a","done":true}"""), ev(2, """"kind":"agent_text","id":"m2","text":"b","done":true}"""))))
+        assertEquals(2L, store.lastSeq)
+        // The desktop now holds 10.. only: 3..9 are gone. The two rows we
+        // have are a transcript with a hole after it; drop them.
+        val advanced = store.replay(SpineResponse(7, true, listOf(ev(10, """"kind":"agent_text","id":"m10","text":"j","done":true}"""), ev(11, """"kind":"agent_text","id":"m11","text":"k","done":true}""")), hasMore = false, oldestSeq = 10, latestSeq = 11))
+        assertTrue(advanced)
+        assertEquals(11L, store.lastSeq)
+        assertEquals(listOf("j", "k"), store.items.map { (it as Item.AgentText).text })
+        // A page that adds nothing reports no advance, so a catch-up loop stops.
+        assertFalse(store.replay(SpineResponse(7, true, emptyList(), hasMore = true, oldestSeq = 10, latestSeq = 11)))
     }
 }

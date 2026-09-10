@@ -2868,17 +2868,25 @@ async fn conversation(Path(id): Path<String>, Query(q): Query<ConversationQuery>
 #[derive(Deserialize)]
 struct SpineQuery {
     after: Option<u64>,
+    /// Byte budget for one page. Absent means the default; a phone that
+    /// pages passes its own. The ring itself is bounded at 4 MiB.
+    max_bytes: Option<usize>,
 }
+
+/// One page is at most this many bytes of events unless the phone asks for
+/// another budget: a JSON body a phone parses in one go, and a fraction of
+/// the ring, so a long session opens in a few round trips instead of one
+/// multi-megabyte answer.
+const SPINE_PAGE_BYTES: usize = 700 * 1024;
 
 /// The spine's replay: everything after `after` for one session. Asking
 /// registers interest, which is what starts (or keeps) the adapter tail —
 /// see `docs/architecture/spine.md`. `live` false means the session is served by the
 /// legacy adapter and the events are re-derived, not read from the engine.
 async fn spine(State(ctx): State<Ctx>, Path(id): Path<String>, Query(q): Query<SpineQuery>) -> Response {
-    match crate::spine::read_after(&ctx.app, &id, q.after.unwrap_or(0)).await {
-        Some((epoch, live, events)) => {
-            Json(serde_json::json!({ "epoch": epoch, "live": live, "events": events })).into_response()
-        }
+    let budget = q.max_bytes.unwrap_or(SPINE_PAGE_BYTES).clamp(16 * 1024, 8 * 1024 * 1024);
+    match crate::spine::read_page_after(&ctx.app, &id, q.after.unwrap_or(0), budget).await {
+        Some(page) => Json(page).into_response(),
         None => err(StatusCode::NOT_FOUND, "no such session"),
     }
 }

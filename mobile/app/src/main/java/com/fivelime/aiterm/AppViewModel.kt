@@ -32,6 +32,9 @@ enum class SessionState { Working, NeedsYou, OnDesktop, Running, Idle }
 /** All state the screens read. The desktop is the source of truth; this is
  *  a cache of it plus what the person is doing right now. Nothing here needs
  *  saving: coming back to the app re-reads everything. */
+/** How many pages one catch-up walks before letting the WebSocket take over. */
+private const val MAX_CATCH_UP_PAGES = 64
+
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val store = Store(app)
 
@@ -1084,10 +1087,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             fetchingSpine = true
             try {
-                val r = a.spine(id, from ?: spine.lastSeq)
+                var r = a.spine(id, from ?: spine.lastSeq)
                 if (selected?.id != id) return@launch
-                spine.replay(r); publishSpine()
+                var advanced = spine.replay(r); publishSpine()
                 lastSpineAt = System.currentTimeMillis()
+                // A long session comes in pages. Keep asking from what we
+                // now hold while the desktop says there is more — but only
+                // while a page moves the cursor, so an empty or repeated
+                // page cannot spin us.
+                var pages = 0
+                while (r.hasMore && advanced && pages++ < MAX_CATCH_UP_PAGES) {
+                    r = a.spine(id, spine.lastSeq)
+                    if (selected?.id != id) return@launch
+                    advanced = spine.replay(r); publishSpine()
+                    lastSpineAt = System.currentTimeMillis()
+                }
             } catch (e: Exception) {
                 android.util.Log.w("Aiterm", "spine fetch failed: ${e.message}")
             } finally {

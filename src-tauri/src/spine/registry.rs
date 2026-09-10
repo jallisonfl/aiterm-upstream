@@ -725,6 +725,48 @@ pub async fn read_after(
     Some((spine.epoch(), spine.is_live(session_id), spine.after(session_id, after_seq)))
 }
 
+/// A bounded page of the spine for the phone listener: `read_after` with a
+/// byte budget, plus the bounds that let a phone tell "nothing new" from
+/// "my cursor fell off the ring". See `Spine::page_after`.
+pub async fn read_page_after(
+    app: &AppHandle,
+    session_id: &str,
+    after_seq: u64,
+    max_bytes: usize,
+) -> Option<SpinePage> {
+    let spine = app.try_state::<Arc<Spine>>().map(|s| s.inner().clone())?;
+    let agent = resolve_agent(&spine, session_id).await?;
+    spine.ensure_tail(app, session_id, &agent);
+    let deadline = Instant::now() + BOOTSTRAP_GRACE;
+    while !spine.is_ready(session_id) && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let (has_more, oldest_seq, latest_seq, turn_open, events) =
+        spine.page_after(session_id, after_seq, max_bytes);
+    Some(SpinePage {
+        epoch: spine.epoch(),
+        live: spine.is_live(session_id),
+        has_more,
+        oldest_seq,
+        latest_seq,
+        turn_open,
+        events,
+    })
+}
+
+/// One page of `read_page_after`, in the shape the listener serialises.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SpinePage {
+    pub epoch: u64,
+    pub live: bool,
+    pub has_more: bool,
+    pub oldest_seq: u64,
+    pub latest_seq: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_open: Option<bool>,
+    pub events: Vec<SpineEvent>,
+}
+
 // -------------------------------------------------------------- the phase
 
 /// The driver's phase half: works out what the session is doing every tick
