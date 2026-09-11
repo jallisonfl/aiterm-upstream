@@ -128,7 +128,7 @@ fun SettingsScreen(vm: AppViewModel, outer: PaddingValues) {
             Row(Modifier.padding(start = 8.dp)) {
                 TextButton(onClick = {
                     scope.launch {
-                        clipboard.setClipEntry(androidx.compose.ui.platform.ClipEntry(android.content.ClipData.newPlainText("aiterm diagnostics", com.fivelime.aiterm.Diag.dump())))
+                        clipboard.setClipEntry(androidx.compose.ui.platform.ClipEntry(android.content.ClipData.newPlainText("aiterm diagnostics", com.fivelime.aiterm.Diag.dumpFile())))
                     }
                 }) { Text("Copy log") }
                 TextButton(onClick = { com.fivelime.aiterm.Diag.clear() }) { Text("Clear") }

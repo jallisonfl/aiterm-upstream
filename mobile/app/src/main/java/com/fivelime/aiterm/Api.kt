@@ -277,14 +277,25 @@ class Api(val baseUrl: String, private val token: String, fingerprint: String, c
         val wsReq = Request.Builder().url(wsUrl)
             .header("X-Aiterm-Device", DEVICE).header("X-Aiterm-Os", OS).header("X-Aiterm-App", APP_VERSION).build()
         return http.newWebSocket(wsReq, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) = onOpen()
+            override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
+                Diag.log("ws", "open ${baseUrl.substringAfter("://").take(40)}")
+                onOpen()
+            }
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val obj = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
                 val type = obj["type"]?.jsonPrimitive?.content ?: return
                 onEvent(type, obj)
             }
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = onClosed()
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) = onClosed()
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Diag.log("ws", "closed $code ${reason.take(80)}")
+                onClosed()
+            }
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
+                // The reason is the whole diagnosis of a dropped evening: a
+                // pong that never came, a reset, a 401 — it goes on the record.
+                Diag.log("ws", "failed ${t.javaClass.simpleName}: ${t.message?.take(120)} http=${response?.code ?: "-"}")
+                onClosed()
+            }
         })
     }
 

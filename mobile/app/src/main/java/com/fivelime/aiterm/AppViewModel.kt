@@ -271,12 +271,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val url = c.url
                     val t0 = System.currentTimeMillis()
                     val status = try { Api(url, link.token, link.fingerprint, c.patienceSeconds).status() } catch (e: IOException) {
-                        android.util.Log.i("Aiterm", "pair probe $url → ${e.javaClass.simpleName}: ${e.message} in ${System.currentTimeMillis() - t0}ms")
+                        Diag.log("net", "pair probe $url → ${e.javaClass.simpleName}: ${e.message} in ${System.currentTimeMillis() - t0}ms")
                         continue
                     } catch (e: ApiError) {
                         notice = if (e.code == 401) "The desktop refused this code — show a fresh QR" else e.message; return@launch
                     }
-                    android.util.Log.i("Aiterm", "pair probe $url → ok in ${System.currentTimeMillis() - t0}ms")
+                    Diag.log("net", "pair probe $url → ok in ${System.currentTimeMillis() - t0}ms")
                     if (status.api != 1) { notice = "This desktop speaks a newer protocol — update the app"; return@launch }
                     // The relay route: what the desktop reports live, else
                     // what the QR named; then, when the QR carried a draft,
@@ -314,9 +314,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun enrollRelay(api: Api, digest: ByteArray): RelayEnrolled? = try {
         val key = b64url(RelayAuthority.publicKeyCompressed())
         val sig = b64url(RelayAuthority.sign(digest))
-        api.relayEnroll(key, sig).also { android.util.Log.i("Aiterm", "relay enrolled: ${it.host}:${it.port}") }
+        api.relayEnroll(key, sig).also { Diag.log("net", "relay enrolled: ${it.host}:${it.port}") }
     } catch (e: Exception) {
-        android.util.Log.w("Aiterm", "relay enrollment failed: ${e.javaClass.simpleName}: ${e.message}")
+        Diag.log("net", "relay enrollment failed: ${e.javaClass.simpleName}: ${e.message}")
         null
     }
 
@@ -339,8 +339,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (status.relay != null || enrollTried[fingerprint] == digest) return
         enrollTried[fingerprint] = digest
         val bytes = PairLink.decodeBase64Url(digest)?.takeIf { it.size == 32 }
-        if (bytes == null) { android.util.Log.w("Aiterm", "relay enrollment digest unreadable; ignoring"); return }
-        android.util.Log.i("Aiterm", "relay enrollment offered in status; signing it")
+        if (bytes == null) { Diag.log("net", "relay enrollment digest unreadable; ignoring"); return }
+        Diag.log("net", "relay enrollment offered in status; signing it")
         viewModelScope.launch {
             val r = enrollRelay(api, bytes) ?: return@launch
             val cur = desktops.find { it.fingerprint == fingerprint } ?: return@launch
@@ -574,7 +574,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 viewModelScope.async {
                     val t0 = System.currentTimeMillis()
                     val r = runCatching { Api(url, d.token, d.fingerprint).status() }
-                    android.util.Log.i("Aiterm", "probe $url → ${r.exceptionOrNull()?.let { it.javaClass.simpleName + ": " + it.message } ?: "ok"} in ${System.currentTimeMillis() - t0}ms")
+                    Diag.log("net", "probe $url → ${r.exceptionOrNull()?.let { it.javaClass.simpleName + ": " + it.message } ?: "ok"} in ${System.currentTimeMillis() - t0}ms")
                     r.getOrNull()
                 }
             }
@@ -582,10 +582,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             for ((i, p) in probes.withIndex()) { val s = p.await(); if (s != null) { chosen = cands[i] to s; break } }
             // Probes past the winner stay alive — see the better-route watch
             // at the bottom of this function.
-            if (chosen == null) { android.util.Log.i("Aiterm", "no address reachable; retry in 3s"); connected = false; scheduleRetry(); return@launch }
+            if (chosen == null) { Diag.log("net", "no address reachable; retry in 3s"); connected = false; scheduleRetry(); return@launch }
             val (won, status) = chosen
             val reachable = won.url
-            android.util.Log.i("Aiterm", "using $reachable (${won.road.id})")
+            Diag.log("net", "using $reachable (${won.road.id})")
             // The desktop reports every address it answers on right now;
             // adopt that list so a DHCP move or new public IP never strands
             // us with only the addresses the QR knew at pairing time.
@@ -619,7 +619,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val url = urls[i]
                 if (url == reachable || rank(d, cands[i]) >= rank(d, won)) continue
                 if (myGen != connectGen || !foreground) return@launch
-                android.util.Log.i("Aiterm", "more local $url answered after commit; switching from $reachable")
+                Diag.log("net", "more local $url answered after commit; switching from $reachable")
                 val cur = desktops.find { it.fingerprint == d.fingerprint } ?: return@launch
                 val nd2 = cur.copy(baseUrl = url)
                 desktops = desktops.map { if (it.fingerprint == nd2.fingerprint) nd2 else it }
@@ -813,7 +813,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e // a newer refresh superseded this one; not an error
         } catch (e: Exception) {
-            android.util.Log.w("Aiterm", "load failed: ${e.javaClass.simpleName}: ${e.message}")
+            Diag.log("net", "load failed: ${e.javaClass.simpleName}: ${e.message}")
             notice = describe(e)
             // A request that cannot reach the desktop while we think we are
             // connected means the saved address went stale under us (the
@@ -1138,7 +1138,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     lastSpineAt = System.currentTimeMillis()
                 }
             } catch (e: Exception) {
-                android.util.Log.w("Aiterm", "spine fetch failed: ${e.message}")
+                Diag.log("net", "spine fetch failed: ${e.message}")
             } finally {
                 fetchingSpine = false
                 if (refetchWanted && selected?.id == id) { refetchWanted = false; fetchSpine(id) }

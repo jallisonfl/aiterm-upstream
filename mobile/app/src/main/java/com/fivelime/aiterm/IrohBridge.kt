@@ -56,9 +56,9 @@ object IrohBridge {
             // a warm QUIC connection turns the probe into one stream open.
             scope.launch {
                 runCatching { connectionTo(ep, nodeId) }
-                    .onFailure { Log.w(TAG, "pre-dial of ${nodeId.take(8)} failed: ${it.message}") }
+                    .onFailure { Diag.log("iroh", "pre-dial of ${nodeId.take(8)} failed: ${it.message}") }
             }
-            Log.i(TAG, "bridging 127.0.0.1:${server.localPort} → ${nodeId.take(8)}")
+            Diag.log("iroh", "bridging 127.0.0.1:${server.localPort} → ${nodeId.take(8)}")
             "https://127.0.0.1:${server.localPort}"
         }
     }
@@ -91,7 +91,7 @@ object IrohBridge {
                 try {
                     bridge(ep, nodeId, socket)
                 } catch (t: Throwable) {
-                    Log.w(TAG, "bridge to ${nodeId.take(8)} failed: ${t.message}")
+                    Diag.log("iroh", "bridge to ${nodeId.take(8)} failed: ${t.message}")
                     runCatching { socket.close() }
                 }
             }
@@ -106,10 +106,10 @@ object IrohBridge {
                 if (c.closeReason() == null) return c
                 conns.remove(nodeId)
             }
-            Log.i(TAG, "dialing ${nodeId.take(8)}…")
+            Diag.log("iroh", "dialing ${nodeId.take(8)}…")
             val addr = EndpointAddr(EndpointId.fromString(nodeId), null, emptyList())
             val c = kotlinx.coroutines.withTimeout(20_000) { ep.connect(addr, ALPN) }
-            Log.i(TAG, "dialed ${nodeId.take(8)}: ${c.paths().joinToString { p -> if (p.isRelay) "relay" else "direct" }}")
+            Diag.log("iroh", "dialed ${nodeId.take(8)}: ${c.paths().joinToString { p -> if (p.isRelay) "relay" else "direct" }}")
             conns[nodeId] = c
             return c
         }

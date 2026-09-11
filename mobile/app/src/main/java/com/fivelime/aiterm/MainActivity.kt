@@ -14,6 +14,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Diag.attach(applicationContext)
         enableEdgeToEdge()
         handlePairIntent(intent)
         setContent { AitermTheme { AitermApp(vm) } }
