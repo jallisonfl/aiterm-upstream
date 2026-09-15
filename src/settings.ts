@@ -109,6 +109,17 @@ export interface AppSettings {
   timeZone: string;
   librarian: LibrarianSettings;
   bringIn: BringInPrompts;
+  updates: UpdateSettings;
+}
+
+/** How the app looks for newer releases of itself (Settings → Updates). */
+export interface UpdateSettings {
+  /** Ask GitHub once a day at launch and show a topbar pill when newer exists.
+   *  The check is one small unauthenticated request; nothing is downloaded
+   *  until asked. */
+  checkOnLaunch: boolean;
+  /** Also offer alpha/beta tags, not just the stable release. */
+  prerelease: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -129,6 +140,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   timeFormat: "relative",
   timeZone: "",
   bringIn: { opening: "", toFirst: "", toFirstLast: "", toSecond: "", approved: "" },
+  updates: { checkOnLaunch: true, prerelease: false },
   librarian: {
     enabled: false,
     engine: "claude",
@@ -170,6 +182,7 @@ export function loadSettings(): AppSettings {
       panelScale: { ...DEFAULT_SETTINGS.panelScale, ...(parsed.panelScale ?? {}) },
       librarian: { ...DEFAULT_SETTINGS.librarian, ...(parsed.librarian ?? {}) },
       bringIn: { ...DEFAULT_SETTINGS.bringIn, ...(parsed.bringIn ?? {}) },
+      updates: { ...DEFAULT_SETTINGS.updates, ...(parsed.updates ?? {}) },
     };
   } catch {
     return DEFAULT_SETTINGS;

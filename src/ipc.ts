@@ -1325,3 +1325,29 @@ export const phoneRemoteRelayClear = () => invoke<PhoneRemoteStatus>("remote_pho
 /** One QR that pairs either phone app: the gateway invite with the phone
  *  listener's fields riding behind under their own names. */
 export const remoteBeginPairingCombined = () => invoke<PairingInvite>("remote_begin_pairing_combined");
+
+// ── Updates ──────────────────────────────────────────────────────────────────
+// "Is there a newer aiterm?" against the GitHub releases of the shipping repo.
+export type PackageKind = "deb" | "rpm" | "appimage" | "unpackaged";
+export interface UpdateAsset { name: string; url: string; size: number }
+export interface UpdateCheck {
+  current: string;
+  latest: string;
+  tag: string;
+  newer: boolean;
+  prerelease: boolean;
+  url: string;
+  published_at: string;
+  notes: string;
+  package: PackageKind;
+  asset: UpdateAsset | null;
+}
+export const updateCheck = (prerelease: boolean) =>
+  invoke<UpdateCheck>("update_check", { prerelease });
+/** Download one release asset into the cache; resolves to the file's path. */
+export const updateDownload = (a: UpdateAsset) =>
+  invoke<string>("update_download", { url: a.url, name: a.name, size: a.size });
+/** Hand a downloaded .deb/.rpm to apt-get/dnf (sudo -n, then pkexec). */
+export const updateInstall = (path: string) => invoke<string>("update_install", { path });
+/** Relaunch the running binary — after an install, the new one. */
+export const appRestart = () => invoke<void>("app_restart");

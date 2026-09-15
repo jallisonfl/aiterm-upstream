@@ -1,5 +1,11 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { readFileSync } from "node:fs";
+
+// The version the build carries, so the Updates pane can say which aiterm this
+// is before (or without) hearing back from GitHub. Same number Cargo and
+// tauri.conf hold; scripts/release.sh bumps all three together.
+const APP_VERSION: string = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version;
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -7,6 +13,7 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
+  define: { __APP_VERSION__: JSON.stringify(APP_VERSION) },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
