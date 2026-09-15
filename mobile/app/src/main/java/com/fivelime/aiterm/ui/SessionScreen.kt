@@ -227,6 +227,14 @@ fun SessionScreen(vm: AppViewModel, s: Session, outer: PaddingValues) {
             val total = list.layoutInfo.totalItemsCount
             if (total == 0 || list.isScrollInProgress) return@collect
             if (atEnd()) { landed = true; return@collect }
+            // A fling stopped by the top ends and lays out in the same
+            // dispatch, so the scroll-end watcher above may not have cleared
+            // `pinned` yet — and this watcher would land the list back at the
+            // end. The list remembers its own last direction: away from the
+            // end means a person scrolled up, whatever order the watchers
+            // ran in [observed 2026-09-15: a fast fling to the top snapped
+            // straight back to the bottom].
+            if (list.lastScrolledBackward) pinned = false
             if (!pinned) return@collect
             // Land on the END of the last item: a block taller than the
             // screen shows its newest words, not its first.
