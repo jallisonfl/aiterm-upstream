@@ -35,7 +35,7 @@ import { useLibrarian } from "./librarian";
 import BringIn from "./components/BringIn";
 import { engineName, useRelay } from "./relay";
 import {
-  Command, FolderOpen, GitBranch, Home, Keyboard, ListChecks, PanelLeft, RefreshCw, RotateCcw, Settings as SettingsIcon, Users, X,
+  ArrowUpCircle, Command, FolderOpen, GitBranch, Home, Keyboard, ListChecks, PanelLeft, RefreshCw, RotateCcw, Settings as SettingsIcon, Users, X,
 } from "lucide-react";
 import { agentTint } from "./brand";
 import SettingsModal, { SettingsTab } from "./components/SettingsModal";
@@ -45,6 +45,7 @@ import { Clock } from "./components/Clock";
 import {
   AppSettings, applySettings, loadSettings, saveSettings, termFontFamily, termTheme,
 } from "./settings";
+import { isCheckDue, readLastCheck, writeLastCheck } from "./updates";
 import {
   Caps,
   ProjectInfo, Session,
@@ -64,6 +65,7 @@ import {
   claudeModelDefault, restoreClaudeModelDefault, sessionPreview,
   TabDescriptor, TabId, TabRegistryEvent, tabClose, tabList, tabOpen,
   tabRegistrySnapshot, tabUpdate,
+  updateCheck, type UpdateCheck,
 } from "./ipc";
 import { createTabRegistryRecovery, reconcileTabs } from "./tabModel";
 import RefusalBanner from "./components/RefusalBanner";
@@ -528,6 +530,26 @@ export default function App() {
     applySettings(settings);
     saveSettings(settings);
   }, [settings]);
+
+  // Launch-time update check: once a day, one small request to GitHub. The
+  // answer is held here so the topbar pill and the Updates pane share it, and
+  // the pane opens already answered. Nothing is downloaded from here.
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
+  useEffect(() => {
+    if (!settings.updates.checkOnLaunch) return;
+    if (!isCheckDue(readLastCheck(), Date.now())) return;
+    let live = true;
+    updateCheck(settings.updates.prerelease)
+      .then((r) => { if (live) { setUpdateInfo(r); writeLastCheck(Date.now()); } })
+      .catch(() => { /* offline or rate-limited: silent, the pane can retry */ });
+    return () => { live = false; };
+    // Once per launch — a settings change mid-run should not re-ask.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const openUpdates = () => {
+    setSettingsTarget({ tab: "updates", provider: null });
+    setShowSettingsModal(true);
+  };
   useEffect(() => {
     if (!showSettingsModal) return;
     const h = (e: KeyboardEvent) => e.key === "Escape" && closeSettings();
@@ -2702,6 +2724,13 @@ export default function App() {
           >{Math.round(fontScale * 100)}%</button>
           <button className="icon-btn" title="Larger fonts (Ctrl+=)" onClick={() => bumpFont(1)}>A+</button>
           <AlertBell alerts={alerts} onGo={(key) => setActiveTab(key)} />
+          {updateInfo?.newer && (
+            <button
+              className="icon-btn upd-pill"
+              title={`aiterm ${updateInfo.latest} is available — open Updates`}
+              onClick={openUpdates}
+            ><Icon of={ArrowUpCircle} /><span>{updateInfo.latest}</span></button>
+          )}
           <button
             className={"icon-btn" + (showSettingsModal ? " on" : "")}
             title="Settings"
@@ -3303,6 +3332,7 @@ export default function App() {
           initialTab={settingsTarget?.tab}
           focusProvider={settingsTarget?.provider}
           librarian={librarian}
+          updateInfo={updateInfo}
         />
       )}
     </div>

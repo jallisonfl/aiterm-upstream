@@ -10,6 +10,7 @@ import Row from "./SettingsRow";
 import RemoteSettings from "./RemoteSettings";
 import LibrarianPane from "./LibrarianPane";
 import BringInPane from "./BringInPane";
+import UpdatesPane from "./UpdatesPane";
 import type { LibrarianCtl } from "../librarian";
 import ClaudeConfig from "./agent-config/ClaudeConfig";
 import {
@@ -23,7 +24,7 @@ import {
   AgentPermissions, agentPermissions, agentPermissionSet,
   fontPackages, installFontFiles, installFontPackage, listFonts,
   diagEnvironment, diagLogPath, diagLogTail, openPath,
-  traceSet, traceStatus,
+  traceSet, traceStatus, type UpdateCheck,
 } from "../ipc";
 
 interface Props {
@@ -39,6 +40,8 @@ interface Props {
    *  straight away, so the step that was missing is the one on screen. */
   focusProvider?: string | null;
   librarian: LibrarianCtl;
+  /** What the launch-time update check found, if it ran. */
+  updateInfo?: UpdateCheck | null;
 }
 
 const PANEL_LABELS: { key: keyof PanelScales; label: string }[] = [
@@ -56,6 +59,7 @@ export type SettingsTab =
   | "librarian"
   | "bringin"
   | "remote"
+  | "updates"
   | "diagnostics";
 type Tab = SettingsTab;
 
@@ -67,6 +71,7 @@ const NAV: { key: Tab; label: string }[] = [
   { key: "librarian", label: "Librarian" },
   { key: "bringin", label: "Bring in" },
   { key: "remote", label: "Remote access" },
+  { key: "updates", label: "Updates" },
   { key: "diagnostics", label: "Diagnostics" },
 ];
 
@@ -120,7 +125,7 @@ function Switch({ checked, onChange, label }: {
 const SIZE_KEY = "aiterm.settingsModalSize";
 
 export default function SettingsModal({
-  settings, onChange, onClose, capsOf, activeProject, initialTab, focusProvider, librarian,
+  settings, onChange, onClose, capsOf, activeProject, initialTab, focusProvider, librarian, updateInfo,
 }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab ?? "appearance");
   // Resizable via the CSS corner grip; the size carries over to the next
@@ -569,6 +574,13 @@ export default function SettingsModal({
             </>}
 
             {tab === "remote" && <RemoteSettings />}
+            {tab === "updates" && (
+              <UpdatesPane
+                cfg={settings.updates}
+                onChange={(next) => onChange({ ...settings, updates: next })}
+                initial={updateInfo}
+              />
+            )}
             {tab === "bringin" && (
               <BringInPane prompts={settings.bringIn} onChange={(next) => onChange({ ...settings, bringIn: next })} />
             )}

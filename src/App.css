@@ -4314,3 +4314,11 @@ input[type="range"]::-webkit-slider-thumb {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .palette-badge { flex: none; width: 20px; height: 20px; }
+
+/* ── Updates ─────────────────────────────────────────────────────────────── */
+/* Topbar mark that a newer release exists. Reads as the version, not an
+   alarm: an update is news, not a fault. */
+.upd-pill { gap: 4px; color: var(--accent); font-size: 11px; padding-right: 8px; }
+.upd-pill span { font-variant-numeric: tabular-nums; }
+/* Release notes, capped so a long changelog does not push the buttons away. */
+.upd-notes { max-height: 220px; overflow: auto; }

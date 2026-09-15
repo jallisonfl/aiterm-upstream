@@ -37,6 +37,7 @@ pub mod taskbar;
 pub mod terminal;
 pub mod trace;
 pub mod tray;
+pub mod updates;
 pub mod usage;
 pub mod watcher;
 pub mod winstate;
@@ -175,6 +176,10 @@ pub fn run() {
             fonts::font_packages,
             fonts::install_font_package,
             fonts::install_font_files,
+            updates::update_check,
+            updates::update_download,
+            updates::update_install,
+            updates::app_restart,
             watcher::watch_project,
             fsx::list_dir,
             fsx::open_path,
