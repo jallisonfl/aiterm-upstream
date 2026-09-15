@@ -307,6 +307,17 @@ export default function SettingsModal({
             className="sm-reset"
             onClick={() => onChange({ ...DEFAULT_SETTINGS })}
           >Reset to defaults</button>
+          {/* Which aiterm this is — version and the commit it was built from.
+              Two builds can share a version number (a package and a local
+              build); the commit tells them apart. Tap for the Updates pane. */}
+          <button
+            className="sm-about"
+            title={"Version " + __APP_VERSION__ + (__APP_COMMIT__ ? ", built from " + __APP_COMMIT__ : "") + " — open Updates"}
+            onClick={() => setTab("updates")}
+          >
+            aiterm {__APP_VERSION__}
+            {__APP_COMMIT__ && <span className="sm-about-sha">{__APP_COMMIT__}</span>}
+          </button>
         </nav>
 
         <div className="sm-pane">
