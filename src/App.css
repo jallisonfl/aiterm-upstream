@@ -4322,3 +4322,18 @@ input[type="range"]::-webkit-slider-thumb {
 .upd-pill span { font-variant-numeric: tabular-nums; }
 /* Release notes, capped so a long changelog does not push the buttons away. */
 .upd-notes { max-height: 220px; overflow: auto; }
+
+/* Version line at the foot of the settings rail. Faint, like the reset
+   button above it — it is a fact, not an action, though it opens Updates. */
+.sm-about {
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: 11px;
+  padding: 4px 10px 2px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.sm-about:hover { color: var(--text-dim); }
+.sm-about-sha { margin-left: 6px; font-family: var(--mono, monospace); opacity: 0.8; }
